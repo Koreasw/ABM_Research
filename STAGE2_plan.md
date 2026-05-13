@@ -446,3 +446,159 @@ STAGE 2.1 부터 순차 진행:
 6. EV1/EV2 라우팅 분기 (1h)
 7. 정적 평면도 3장 (1.5h)
 8. 통합 테스트 + commit
+
+---
+
+## 15. STAGE 2.1 완료 기록 (이행 로그)
+
+> 본 절은 *계획 (§1~§14)* 이 실제로 구현되면서 사용자 피드백을 거쳐 진화한 *실제 산출물* 을 기록한다.
+> 다음 단계 (STAGE 2.2~) 진입 전의 동결된 baseline 상태.
+
+### 15.1 산출물 요약
+
+| 파일 | 라인 | 역할 |
+|---|---|---|
+| `simulation/space.py` | ~210 | `build_building_graph()` + 노드/엣지 attribute |
+| `tests/test_space.py` | ~160 | 10 unit tests (구조·연결·라우팅·입력 검증) |
+| `paper/figures/draft_building_section.png` | - | 5F 빌딩 측면도 (vertical section) |
+| `paper/figures/draft_floor_plan.png` | - | 1개 사무 층 평면도 (top-down view) |
+
+### 15.2 최종 그래프 사양 (5F baseline)
+
+| 항목 | 값 | 비고 |
+|---|---|---|
+| 빌딩 footprint | 19 m × 17.5 m | 한국 100평 표준 사무 |
+| 복도 길이 | 19 m | 1m grid → 20 positions (0..19) |
+| 복도 폭 | 2 m | 한국 사무 표준 |
+| 층고 | 3.6 m | |
+| 층 구조 | B1F + 1F + 2F~5F (6 levels) | |
+| 점유 | ~280 인 (56인/층 × 5) | 1인당 9 m² |
+
+### 15.3 사무실 + EV 배치 (최종)
+
+**그래프 default**:
+- `DEFAULT_OFFICE_POSITIONS_M = (3, 8, 13, 17, 3, 8, 14, 17)`
+- `DEFAULT_OFFICE_SIDES = ("north", "north", "north", "north", "south", "south", "south", "south")`
+- `DEFAULT_EV_CORRIDOR_POSITIONS_M = (11, 12)`
+
+**시각화 박스 위치 vs corr branch 정렬**:
+
+| Office | side | corr branch | 박스 (x 시작 ~ 끝) | 박스 중심 | Δ |
+|---|---|---|---|---|---|
+| Office 1 | north | corr[3]  | 0.0 – 6.0 m  (6.0 m) | 3.000 | **0.00 ✓** |
+| Office 2 | north | corr[8]  | 6.0 – 10.5 m (4.5 m) | 8.250 | 0.25 |
+| Office 3 | north | corr[13] | 10.5 – 15.0 m (4.5 m) | 12.750 | 0.25 |
+| Office 4 | north | corr[17] | 15.0 – 19.0 m (4.0 m) | 17.000 | **0.00 ✓** |
+| Office 5 | south | corr[3]  | 0.0 – 5.7 m  (5.7 m) | 2.850 | 0.15 |
+| Office 6 | south | corr[8]  | 5.7 – 10.0 m (4.3 m) | 7.850 | 0.15 |
+| Office 7 | south | corr[14] | 12.5 – 15.75 m (3.25 m) | 14.125 | 0.13 |
+| Office 8 | south | corr[17] | 15.75 – 19.0 m (3.25 m) | 17.375 | 0.38 |
+
+**EV 배치**:
+- EV1 (people-only, robot_accessible=False) at corr[11], 1 m walk from corridor
+- EV2 (shared, robot_accessible=True) at corr[12], 1 m walk from corridor
+- EV Hall (시각화): south 측 x=10.0~12.5 (2.5 m wide), 두 EV가 인접 side-by-side
+
+**비상계단**: 평면도 main footprint 외부 (x=19.2~20.4) annex 로 표시 — graph node 아님.
+
+### 15.4 노드 / 엣지 인벤토리 (실측)
+
+| 카테고리 | 개수 | 설명 |
+|---|---|---|
+| floor_center | 6 | B1F, 1F, 2F, 3F, 4F, 5F |
+| corridor | **80** | 4 office floors × 20 positions (0..19, 1m grid) |
+| office | **32** | 4 floors × 8 offices (4 north + 4 south) |
+| elevator | 12 | 2 EVs × 6 floors |
+| support | 2 | b1f_charging, b1f_waiting |
+| **합계 노드** | **132** | |
+| 모든 directional edges | **314** | walk + ev edges (bidirectional pair = 2 directed) |
+
+### 15.5 거리 attribute 규칙 (구현 확정)
+
+| 엣지 | 거리 | 비고 |
+|---|---|---|
+| corridor[i] ↔ corridor[i+1] | **1.0 m** | 1m grid |
+| office ↔ corridor[branch_pos] | **3.0 m** | 사무실 분기 |
+| floor_center ↔ corridor[mid] | **3.0 m** | (office 층만; mid = 복도 중앙 position) |
+| floor_center ↔ ev_node | **4.0 m** | B1F·1F 만 (office 층은 EV 직접 corridor 연결) |
+| corridor[ev_pos] ↔ ev_node | **1.0 m** | office 층에서 EV 진입 |
+| b1f_charging ↔ floor_B1_center | **2.0 m** | 중앙 배치 (user 요청) |
+| b1f_waiting ↔ floor_B1_center | **2.0 m** | 중앙 배치 |
+| b1f_charging ↔ b1f_waiting | **1.0 m** | 인접 |
+
+### 15.6 평면도 진화 기록 (사용자 피드백 반영 과정)
+
+| iteration | 사용자 피드백 | 적용 결과 |
+|---|---|---|
+| v1 | (초기 구현) | 100m corridor, 4 EV, 10 offices/floor — 비현실적 |
+| v2 | "5층 건물 크기가 현실과 맞지 않음" | 한국 사무 빌딩 조사 → 500 m²/층, 27m corridor, 2 EV |
+| v3 | "면적이 너무 크지 않아?" | 500 m² 도 너무 큼 → 추가 옵션 제시 |
+| v4 | "EV 위치 조정" | EV 를 외부 → corridor 내부 (5/15) 로 이동 + B1F 충전·대기 중앙 |
+| v5 | 100평 평면도 첨부 | 19m × 17.5m, 8 offices, 중앙 EV hall (11/12) 로 재구성 |
+| v6 | "한층 평면도 표시" | top-down floor plan figure 추가 |
+| v7 | "단일 층 평면도 깨짐 (toilets 겹침)" | 토일렛/청소실 제거, Office 4 폭 확대, 비상계단 annex 화 |
+| v8 | "Office 4, 6, 8 node 포인트 확인" | Δ 계산 후 Office 6: corr[6]→corr[8] 정정 (2m 편향 → 0.15m) |
+| v9 | "버퍼 제거, Office 7/8 동일 분할" | Office 8: corr[16]→corr[17], 3.25m 동일 폭 분할 |
+
+### 15.7 디자인 결정 D1~D4 검증
+
+| 결정 | 계획 (§3) | 실제 구현 | 비고 |
+|---|---|---|---|
+| **D1** | corridor 1m discrete | ✓ 적용 | 20 positions per office floor |
+| **D2** | uniform 3m spacing at [1,4,7,10,13,16,19] | △ **변경됨** | 평면도 정합으로 재배치: north [3,8,13,17] + south [3,8,14,17] |
+| **D3** | 별도 `elevator_physics.py` | ⏳ STAGE 2.4 | 아직 구현 안 됨 (2.1 범위 밖) |
+| **D4** | 정적 평면도 figure | ✓ 부분 적용 | section + floor_plan 2장 완료; lobby 는 STAGE 2.3 + 2.6 |
+
+→ D2 는 사용자 피드백 (100평 평면도 첨부) 으로 디자인 변경됨. 새 위치도 *uniform-spaced* 성격은 유지하되, 실제 한국 사무 빌딩의 *비대칭* 레이아웃 (북측 4 + 남측 4 + 중앙 EV hall) 을 반영.
+
+### 15.8 검증 통계
+
+- **tests/test_space.py**: 10 tests pass
+  - `test_baseline_node_count_breakdown`
+  - `test_corridor_consecutive_connectivity`
+  - `test_office_branch_positions_match_floor_plan`
+  - `test_office_sides_split_evenly`
+  - `test_ev_positions_central_hall`
+  - `test_b1f_support_co_located_at_center`
+  - `test_elevator_node_attributes`
+  - `test_floor_center_evs_only_on_b1_and_1f`
+  - `test_ev_vertical_connectivity_all_floor_pairs`
+  - `test_invalid_inputs_raise`
+- **전체 suite**: 58 passed, 5 skipped
+
+### 15.9 Git 히스토리 (STAGE 2.1 관련 commits)
+
+| commit | 변경 내용 |
+|---|---|
+| `d41d195` | STAGE 2.1: build_building_graph 초기 구현 (corridor 단일 행, EV 외부) |
+| `b5824e0` | EV 를 corridor 내부 [5, 15] 로 이동, B1F support 중앙 |
+| `9e3f8c5` | 평면도 정합 (100평, 8 offices, 중앙 EV hall [11, 12]) |
+| `dc4bc00` | typical floor plan top-down figure 추가 |
+| `b382e04` | floor plan visual cleanup (toilets 제거, 비상계단 annex) |
+| `c61bed9` | Office 6 corr[6]→corr[8] 정정, branch 중심 정렬 |
+| `53dfff8` | 남측 buffer 제거, Office 7/8 동일 폭 분할 (corr[17]) |
+
+### 15.10 STAGE 2.1 완료 조건 체크
+
+- [x] `build_building_graph(5F)` 가 132-node graph 생성
+- [x] 모든 노드/엣지 attribute 명세 일관
+- [x] 한국 100평 표준 사무 빌딩 평면도와 정합
+- [x] 8개 사무실 모두 corr branch 점이 박스 중심에 정렬 (Δ ≤ 0.5m)
+- [x] EV1 / EV2 분리 (robot_accessible 플래그)
+- [x] B1F 충전·대기 중앙 공동 배치
+- [x] 10 unit tests pass
+- [x] 빌딩 section + 단일 층 figure 2장 산출
+
+### 15.11 STAGE 2.2 진입 조건
+
+STAGE 2.2 는 다음 query API 를 추가하여 그래프 위 *경로/거리 계산* 가능하게 한다:
+- `shortest_walk_path(g, source, target, robot=False) -> (path, distance)`
+- `floor_of(node) -> int | None`
+- `offices_on_floor(g, floor) -> list[str]`
+- `elevator_nodes(g, ev_id=None) -> dict[str, list[str]]`
+- (선택) `corridor_density(g, node, agent_positions) -> float`
+
+**검증 시나리오**:
+- `b1f_charging → 5F-office_3` 경로의 총 거리·노드 시퀀스 정확성
+- `robot=True` 시 EV1 회피하고 EV2 만 경유
+- `offices_on_floor(g, 5)` 가 8개 office 반환
