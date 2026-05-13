@@ -23,10 +23,11 @@
 - mean = 27.4, median = 24
 - 활용: LockerAgent V_max baseline 100 결정 근거 (q95 ≈ 70)
 
-## 4. 배달 리드타임 (DLV_DEADLINE − ORD_TIME)
-- q05 = 36.1 min  (CustomerAgent τ_abandon 하한 anchor)
+## 4. 플랫폼 SLA 분포 (DLV_DEADLINE − ORD_TIME = 약속된 ETA 대기시간)
+- q05 = 36.1 min  (가장 빠른 ETA 약속)
 - q50 = 51.0 min
-- q95 = 74.2 min
+- q95 = 74.2 min  (가장 늦은 ETA 약속)
+- DLV_DEADLINE 은 배민 알고리즘 산출 ETA (cook + 거리 + 식당 정확도). 본 paper 에서는 L_sla_violation KPI 의 비교 기준으로 사용 (CustomerAgent.dlv_deadline_sec 로 직접 주입). 고객 포기 (renege) 행동은 모델링하지 않음.
 
 ## 5. 도로망 픽업-드롭 거리 (context)
 - mean = 1.57 km, max = 6.79 km
