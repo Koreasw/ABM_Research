@@ -4,11 +4,15 @@ t_rider_arrival(i) = start + ORD_TIME(i) + COOK_TIME(i) + travel_time(i) * eps
 travel_time(i)     = DIST[i][K+i] / speed(rider_type(i))
 eps                ~ Lognormal(-sigma_eps^2/2, sigma_eps^2)  // mean 1, unbiased
 
-rider_type(i) is sampled from Cat(p_BIKE, p_WALK, p_CAR) weighted by
-RIDERS.available_number of the scenario. The lognormal noise is
-**multiplicative** on travel_time (additive interpretation of an O(1 s)
-Lognormal would be meaningless on a minute-scale variable; see §2.5
-sensitivity sweep sigma_eps in [0, 0.30]).
+rider_type(i) is sampled **per-order** from {types: capa >= VOL(i)},
+weighted by RIDERS.available_number among the eligible set. This
+enforces dispatch feasibility (rider's capa >= order VOL) and removes
+the ~0.4% of capa-violating assignments observed in the previous
+available_number-only marginal sampling.
+
+The lognormal noise is **multiplicative** on travel_time (additive
+interpretation of an O(1 s) Lognormal would be meaningless on a
+minute-scale variable; see §2.5 sensitivity sweep sigma_eps in [0, 0.30]).
 
 w_R (KRW/h) is calibrated per rider type as
     w_R(type) = fixed_cost + var_cost * throughput_per_rider_h
@@ -54,16 +58,25 @@ def _sample_lognormal_unbiased(
     return rng.lognormal(mean=-(sigma**2) / 2.0, sigma=sigma, size=size)
 
 
-def _sample_rider_types(
-    rng: np.random.Generator, riders: list[Rider], size: int
-) -> np.ndarray:
-    """Sample rider types weighted by RIDERS.available_number."""
-    types = np.array([r.type for r in riders])
-    weights = np.array([r.available_number for r in riders], dtype=float)
+def _sample_rider_type_for_order(
+    rng: np.random.Generator, riders: list[Rider], vol: int
+) -> str:
+    """Sample one rider type whose capa >= vol, weighted by available_number.
+
+    Raises ValueError if no rider type can carry the order
+    (i.e., max(capa across all types) < vol).
+    """
+    eligible = [r for r in riders if r.capa >= vol]
+    if not eligible:
+        raise ValueError(
+            f"No rider type can carry VOL={vol} "
+            f"(max capa = {max(r.capa for r in riders)})"
+        )
+    weights = np.array([r.available_number for r in eligible], dtype=float)
     if weights.sum() <= 0:
-        raise ValueError("RIDERS.available_number sum must be > 0")
+        raise ValueError("Eligible RIDERS.available_number sum must be > 0")
     probs = weights / weights.sum()
-    return rng.choice(types, size=size, p=probs)
+    return str(rng.choice([r.type for r in eligible], p=probs))
 
 
 def sample_rider_arrivals(
@@ -81,7 +94,10 @@ def sample_rider_arrivals(
     rng = np.random.default_rng(seed)
     K = scenario.K
 
-    type_by_order = _sample_rider_types(rng, scenario.riders, K)
+    # Sample rider type per-order constrained by capa >= order.vol
+    type_by_order = np.array(
+        [_sample_rider_type_for_order(rng, scenario.riders, o.vol) for o in scenario.orders]
+    )
     rider_index_by_type = {r.type: i for i, r in enumerate(scenario.riders)}
     speed_by_order = np.array(
         [scenario.riders[rider_index_by_type[t]].speed_mps for t in type_by_order]

@@ -47,6 +47,7 @@
 - fig_lead_time.png
 - fig_pickup_drop_distance.png
 - fig_rider_arrival_lambda_K.png — §2.5 합성 결과 + bootstrap CI
+- fig_vol_by_rider_type.png — capa-conditional VOL 분포 (BIKE/WALK/CAR)
 
 ## 8. fitted_params.json 키 구조
 - `pooled`, `by_K[K]`: DemandModel.to_dict() 직렬화

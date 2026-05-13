@@ -120,10 +120,12 @@ rider_type(i)      ~ Cat(p_BIKE, p_WALK, p_CAR)   // RIDERS.available_number 가
 |---|---|---|
 | ORD_TIME 시퀀스 | 시나리오 ORDERS [1] | K-stratum 별 NHPP λ_K(t) 적합 (§4.1.1) |
 | COOK_TIME | Gamma(shape=4.70, scale=223.3 s), AIC 최우수 | §4.1.2, fit_report.md |
-| travel_time | DIST[i][K+i] / speed(type); type ∈ {BIKE=5.29, WALK=1.32, CAR=4.23} m/s | §4.1.3, speed 분포는 시나리오 RIDERS.available_number 가중 |
+| travel_time | DIST[i][K+i] / speed(type); type ∈ {BIKE=5.29, WALK=1.32, CAR=4.23} m/s | §4.1.3, speed 분포는 RIDERS.available_number 가중 **+ capa-conditional eligibility** (아래 단락 참조) |
 | ε noise | Lognormal(0, 0.15²) | 도시 도로망 변동 표준 가정, sensitivity sweep σ_ε ∈ [0.0, 0.30] |
 
-**산출물**: `analysis/rider_arrival_model.py` — `sample_rider_arrivals(scenario_path, seed) → list[RiderArrivalEvent]`. 각 이벤트는 `(t_arrival_sec, order_id, vol, rider_type, time_cost_per_sec, deadline_sec)`.
+**rider_type(i) 샘플링 규칙 (capa-conditional)**: 각 주문 i 의 rider_type 은 *해당 주문의 VOL을 처리할 수 있는 라이더 집합* `{r : r.capa ≥ VOL(i)}` 안에서, `RIDERS.available_number` 가중치로 샘플링한다. 이는 dispatcher 의 capa 제약을 인과 순서대로 (ORDER → ELIGIBLE TYPES → SAMPLED TYPE) 반영하여 *데이터 비일관 할당* (WALK capa 70 인데 VOL > 70 주문 운반 등; 실측 1.9% 주문이 VOL > 70) 을 사전 차단한다. STAGE 1.5 검증에서 `52,000` 합성 events 의 capa 위반 = **0** (이전 marginal 샘플링 0.40% 위반).
+
+**산출물**: `analysis/rider_arrival_model.py` — `sample_rider_arrivals(scenario_path, seed) → list[RiderArrivalEvent]`. 각 이벤트는 `(t_arrival_sec, order_id, vol, rider_type, time_cost_per_sec, deadline_sec)`. capa-conditional 효과의 시각화는 `analysis/figures/fig_vol_by_rider_type.png` 참조.
 
 ### 2.6 데이터 단위 ↔ 운영 단위의 정합성
 

@@ -176,3 +176,50 @@ def test_lambda_integral_recovers_K() -> None:
 def test_lambda_K_filter_raises_on_empty() -> None:
     with pytest.raises(ValueError):
         estimate_lambda_rider_K([K50_1], K=999, bootstrap_iters=10)
+
+
+def test_no_capa_violations_across_tier1_cohort() -> None:
+    """Per-order capa-conditional rider sampling must never violate rider.capa >= VOL."""
+    tier1_paths = [
+        p for p in sorted(DATA.glob("K*_*.json"))
+        if load_scenario(p).K in (50, 100, 200, 300)
+    ]
+    violations = 0
+    total = 0
+    for p in tier1_paths:
+        scenario = load_scenario(p)
+        capa_by_type = {r.type: r.capa for r in scenario.riders}
+        for seed in range(5):
+            events = sample_rider_arrivals(p, seed=seed)
+            for e in events:
+                total += 1
+                if e.vol > capa_by_type[e.rider_type]:
+                    violations += 1
+    assert violations == 0, (
+        f"{violations} capa violations out of {total} synthesized events "
+        f"(capa-conditional sampling failed)"
+    )
+
+
+def test_high_vol_order_excludes_walk() -> None:
+    """An order with VOL > 70 must never be assigned to WALK."""
+    # Find a scenario with at least one VOL > 70 order
+    target_path = None
+    for p in sorted(DATA.glob("K*_*.json")):
+        s = load_scenario(p)
+        if any(o.vol > 70 for o in s.orders):
+            target_path = p
+            break
+    if target_path is None:
+        pytest.skip("no VOL > 70 order in any scenario")
+
+    target_scenario = load_scenario(target_path)
+    high_vol_order_ids = {o.ord_id for o in target_scenario.orders if o.vol > 70}
+    for seed in range(20):
+        events = sample_rider_arrivals(target_path, seed=seed)
+        for e in events:
+            if e.order_id in high_vol_order_ids:
+                assert e.rider_type != "WALK", (
+                    f"high-VOL order {e.order_id} (VOL={e.vol}) assigned to WALK "
+                    f"(capa 70) under seed={seed}"
+                )

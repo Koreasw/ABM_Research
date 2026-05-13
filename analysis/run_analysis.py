@@ -35,6 +35,7 @@ from analysis.load_data import load_scenario, pickup_drop_distance  # noqa: E402
 from analysis.rider_arrival_model import (  # noqa: E402
     compute_w_R_krw_per_h,
     estimate_lambda_rider_K,
+    sample_rider_arrivals,
 )
 
 K_STRATA = [50, 100, 200, 300]   # 1차 분석: 일관된 ~1h horizon (framework §2.6 caveat)
@@ -201,6 +202,51 @@ def plot_pickup_drop_distance(pdd: np.ndarray, out_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_vol_by_rider_type(
+    scenarios: list[Path],
+    out_path: Path,
+    n_seeds: int = 10,
+) -> None:
+    """VOL distribution conditional on rider type (capa-conditional sampling)."""
+    type_capa = {"BIKE": 100, "WALK": 70, "CAR": 200}
+    type_vols: dict[str, list[int]] = {t: [] for t in type_capa}
+    for p in scenarios:
+        for seed in range(n_seeds):
+            events = sample_rider_arrivals(p, seed=seed)
+            for e in events:
+                type_vols[e.rider_type].append(e.vol)
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2), sharey=True)
+    colors = {"BIKE": "tab:orange", "WALK": "tab:green", "CAR": "tab:blue"}
+    bin_edges = np.arange(0, 105, 5)
+    for ax, t in zip(axes, ["BIKE", "WALK", "CAR"], strict=False):
+        vols = np.array(type_vols[t])
+        if len(vols) == 0:
+            ax.set_title(f"{t}  (no events)")
+            continue
+        ax.hist(vols, bins=bin_edges, color=colors[t], edgecolor="black", alpha=0.85)
+        ax.axvline(vols.mean(), color="red", lw=2,
+                   label=f"mean = {vols.mean():.1f}")
+        ax.axvline(np.median(vols), color="darkorange", lw=2, ls=":",
+                   label=f"median = {np.median(vols):.0f}")
+        capa = type_capa[t]
+        if capa <= 105:
+            ax.axvline(capa, color="black", lw=1.5, ls="--",
+                       label=f"capa = {capa}")
+        ax.set_xlabel("VOL")
+        ax.set_title(f"{t}  (capa={capa}, n={len(vols):,}, "
+                     f"range=[{vols.min()},{vols.max()}])")
+        ax.legend(loc="upper right", fontsize=9)
+    axes[0].set_ylabel("count")
+    fig.suptitle(
+        "VOL distribution by rider type — capa-conditional dispatch "
+        f"({n_seeds} seeds x {len(scenarios)} scenarios)"
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+
 def plot_rider_arrival_lambda_by_K(
     rider_lambda_by_K: dict[int, dict], out_path: Path
 ) -> None:
@@ -319,6 +365,7 @@ def main(
         plot_rider_arrival_lambda_by_K(
             rider_lambda_by_K, figures_dir / "fig_rider_arrival_lambda_K.png"
         )
+    plot_vol_by_rider_type(scenarios, figures_dir / "fig_vol_by_rider_type.png")
 
     print("writing fit_report.md...")
     write_fit_report(dm_pooled, dm_by_K, params["summary"], w_R_by_type, out_dir / "fit_report.md")
@@ -394,6 +441,7 @@ def write_fit_report(
         "- fig_lead_time.png",
         "- fig_pickup_drop_distance.png",
         "- fig_rider_arrival_lambda_K.png — §2.5 합성 결과 + bootstrap CI",
+        "- fig_vol_by_rider_type.png — capa-conditional VOL 분포 (BIKE/WALK/CAR)",
         "",
         "## 8. fitted_params.json 키 구조",
         "- `pooled`, `by_K[K]`: DemandModel.to_dict() 직렬화",
