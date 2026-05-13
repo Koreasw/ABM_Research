@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import networkx as nx
 
-DEFAULT_OFFICE_POSITIONS_M: tuple[int, ...] = (3, 8, 13, 17, 3, 8, 14, 16)
+DEFAULT_OFFICE_POSITIONS_M: tuple[int, ...] = (3, 8, 13, 17, 3, 8, 14, 17)
 DEFAULT_OFFICE_SIDES: tuple[str, ...] = (
     "north", "north", "north", "north",
     "south", "south", "south", "south",
