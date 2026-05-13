@@ -13,16 +13,21 @@ from __future__ import annotations
 
 import networkx as nx
 
-DEFAULT_OFFICE_POSITIONS_M: tuple[int, ...] = (1, 3, 7, 10, 13, 17, 19)
-DEFAULT_EV_CORRIDOR_POSITIONS_M: tuple[int, ...] = (5, 15)
+DEFAULT_OFFICE_POSITIONS_M: tuple[int, ...] = (3, 8, 13, 17, 3, 6, 14, 16)
+DEFAULT_OFFICE_SIDES: tuple[str, ...] = (
+    "north", "north", "north", "north",
+    "south", "south", "south", "south",
+)
+DEFAULT_EV_CORRIDOR_POSITIONS_M: tuple[int, ...] = (11, 12)
 
 
 def build_building_graph(
     n_floors: int = 5,
-    n_offices_per_floor: int = 7,
+    n_offices_per_floor: int = 8,
     office_positions_m: tuple[int, ...] = DEFAULT_OFFICE_POSITIONS_M,
+    office_sides: tuple[str, ...] = DEFAULT_OFFICE_SIDES,
     ev_corridor_positions_m: tuple[int, ...] = DEFAULT_EV_CORRIDOR_POSITIONS_M,
-    corridor_length_m: float = 20.0,
+    corridor_length_m: float = 19.0,
     corridor_resolution_m: float = 1.0,
     floor_height_m: float = 3.6,
     n_people_only_evs: int = 1,
@@ -53,6 +58,15 @@ def build_building_graph(
         raise ValueError(
             f"len(office_positions_m)={len(office_positions_m)} must equal "
             f"n_offices_per_floor={n_offices_per_floor}"
+        )
+    if len(office_sides) != n_offices_per_floor:
+        raise ValueError(
+            f"len(office_sides)={len(office_sides)} must equal "
+            f"n_offices_per_floor={n_offices_per_floor}"
+        )
+    if any(s not in ("north", "south") for s in office_sides):
+        raise ValueError(
+            f"office_sides must contain only 'north' or 'south'; got {office_sides}"
         )
     n_evs_total = n_people_only_evs + n_shared_evs
     if n_evs_total < 1:
@@ -86,6 +100,7 @@ def build_building_graph(
     g.graph["floor_height_m"] = floor_height_m
     g.graph["n_offices_per_floor"] = n_offices_per_floor
     g.graph["office_positions_m"] = tuple(office_positions_m)
+    g.graph["office_sides"] = tuple(office_sides)
     g.graph["ev_corridor_positions_m"] = tuple(ev_corridor_positions_m)
     g.graph["n_people_only_evs"] = n_people_only_evs
     g.graph["n_shared_evs"] = n_shared_evs
@@ -127,13 +142,16 @@ def build_building_graph(
                 floor=floor_int,
                 position_m=float(p) * corridor_resolution_m,
             )
-        for n_office, corr_pos in enumerate(office_positions_m):
+        for n_office, (corr_pos, side) in enumerate(
+            zip(office_positions_m, office_sides, strict=True)
+        ):
             g.add_node(
                 f"floor_{floor_str}_office_{n_office}",
                 type="office",
                 floor=floor_int,
                 office_id=n_office,
                 corridor_position_m=int(corr_pos),
+                side=side,
             )
 
     # B1F support nodes — placed at center near floor_B1_center (per user request).
