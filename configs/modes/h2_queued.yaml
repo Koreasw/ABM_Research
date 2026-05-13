@@ -1,0 +1,5 @@
+mode: h2_queued
+# Rider joins queue; assigned next idle robot.
+queue_capacity: 8
+handoff_service_mean_sec: 60.0
+handoff_service_sd_sec: 15.0

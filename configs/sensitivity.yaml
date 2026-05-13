@@ -1,0 +1,20 @@
+# Sensitivity sweeps (framework §7.7).
+morris:
+  n_trajectories: 10
+  parameters:
+    - { name: w_R_krw_per_h_bike,   bounds: [5000.0, 20000.0] }
+    - { name: locker_n_compartments, bounds: [2, 16] }
+    - { name: locker_v_max,         bounds: [50, 200] }
+    - { name: dock_mean_sec,        bounds: [10.0, 40.0] }
+    - { name: tau_patience_sec,     bounds: [60.0, 900.0] }
+    - { name: n_robots,             bounds: [1, 10] }
+    - { name: K,                    bounds: [50, 1000] }
+    - { name: alpha_lobby_extra,    bounds: [0.0, 0.3] }
+    - { name: discount_rate,        bounds: [0.02, 0.10] }
+    - { name: social_acceptance_alpha, bounds: [0.0, 0.3] }
+    - { name: locker_install_capex_krw, bounds: [4000000, 16000000] }
+    - { name: sigma_eps,            bounds: [0.0, 0.30] }
+
+sobol:
+  n_samples: 1024
+  top_k_from_morris: 6

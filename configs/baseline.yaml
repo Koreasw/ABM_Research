@@ -1,0 +1,52 @@
+# Baseline configuration (framework §5, §6).
+building:
+  n_floors: 5
+  corridor_length_m: 100.0
+  floor_height_m: 4.0
+  people_evs: 3
+  shared_ev_capacity_people_no_robot: 10
+  shared_ev_capacity_people_with_robot: 6
+
+elevator:
+  accel_mps2: 1.0
+  max_speed_mps: 2.5
+  door_open_close_sec: 4.0
+  social_acceptance_alpha: 0.1
+  alpha_lobby_extra: 0.1
+
+robot:
+  n_robots: 3
+  capa: 100
+  soc_low_threshold: 20.0
+  speed_mps: 1.0
+  service_time_pickup_sec_h1: 60.0
+  service_time_pickup_sec_h3: 15.0
+  service_time_drop_sec: 30.0
+
+locker:
+  n_compartments: 8
+  v_max: 100
+  storage_limit_sec: 1800.0
+  dock_mean_sec: 20.0
+  dock_sd_sec: 5.0
+  pickup_mean_sec: 15.0
+  pickup_sd_sec: 4.0
+
+rider:
+  w_R_krw_per_h_bike: 10500.0
+  w_R_krw_per_h_walk: 7500.0
+  w_R_krw_per_h_car: 12500.0
+  tau_patience_sec: 300.0
+  sigma_eps: 0.15
+
+customer:
+  tau_abandon_sec_default: 2280.0
+
+simulation:
+  rng_seed: 42
+  lunch_peak_start_sec: 41400.0   # 11:30
+  horizon_sec: 3600.0             # 1 h lunch peak
+
+npv:
+  horizon_years: 5
+  discount_rate: 0.05

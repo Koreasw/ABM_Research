@@ -1,0 +1,4 @@
+mode: h1_sync
+# Rider meets robot at handoff_counter (synchronous).
+handoff_service_mean_sec: 60.0
+handoff_service_sd_sec: 15.0

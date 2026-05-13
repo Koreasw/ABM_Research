@@ -18,7 +18,7 @@ dist/
 venv/
 env/
 ENV/
-.python-version
+# .python-version 은 추적 (clone 시 uv 가 Python 버전 자동 인식)
 
 # --- Jupyter ---
 .ipynb_checkpoints/

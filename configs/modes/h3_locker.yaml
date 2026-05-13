@@ -1,0 +1,3 @@
+mode: h3_locker
+# Rider docks order in locker_bank; robot picks up later.
+fallback_on_full: queue   # or "reject"
