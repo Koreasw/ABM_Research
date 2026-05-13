@@ -48,9 +48,10 @@ def test_corridor_consecutive_connectivity(baseline_graph) -> None:
 
 
 def test_office_branch_positions_match_floor_plan(baseline_graph) -> None:
-    """Floor plan layout: 4 north offices [3, 8, 13, 17] + 4 south offices [3, 6, 14, 16],
-    central EV hall at [11, 12]."""
-    assert DEFAULT_OFFICE_POSITIONS_M == (3, 8, 13, 17, 3, 6, 14, 16)
+    """Floor plan layout: 4 north offices [3, 8, 13, 17] + 4 south offices [3, 8, 14, 16].
+    Office 6 at corr[8] aligns with the reference floor plan's south-side office center
+    (~7.85 m), and avoids the 2 m misalignment that corr[6] introduced earlier."""
+    assert DEFAULT_OFFICE_POSITIONS_M == (3, 8, 13, 17, 3, 8, 14, 16)
     assert DEFAULT_OFFICE_SIDES == (
         "north", "north", "north", "north",
         "south", "south", "south", "south",
