@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import networkx as nx
 
-DEFAULT_OFFICE_POSITIONS_M: tuple[int, ...] = (1, 4, 7, 10, 13, 16, 19)
+DEFAULT_OFFICE_POSITIONS_M: tuple[int, ...] = (1, 3, 7, 10, 13, 17, 19)
+DEFAULT_EV_CORRIDOR_POSITIONS_M: tuple[int, ...] = (5, 15)
 
 
 def build_building_graph(
     n_floors: int = 5,
     n_offices_per_floor: int = 7,
     office_positions_m: tuple[int, ...] = DEFAULT_OFFICE_POSITIONS_M,
+    ev_corridor_positions_m: tuple[int, ...] = DEFAULT_EV_CORRIDOR_POSITIONS_M,
     corridor_length_m: float = 20.0,
     corridor_resolution_m: float = 1.0,
     floor_height_m: float = 3.6,
@@ -55,6 +57,11 @@ def build_building_graph(
     n_evs_total = n_people_only_evs + n_shared_evs
     if n_evs_total < 1:
         raise ValueError("Must have at least 1 elevator (people-only or shared)")
+    if len(ev_corridor_positions_m) != n_evs_total:
+        raise ValueError(
+            f"len(ev_corridor_positions_m)={len(ev_corridor_positions_m)} must equal "
+            f"total EV count {n_evs_total}"
+        )
 
     n_corridor_positions = int(round(corridor_length_m / corridor_resolution_m)) + 1
     max_pos = n_corridor_positions - 1
@@ -63,6 +70,14 @@ def build_building_graph(
             raise ValueError(
                 f"office_positions_m contains {p}, outside corridor range [0, {max_pos}]"
             )
+    for p in ev_corridor_positions_m:
+        if not (0 <= p <= max_pos):
+            raise ValueError(
+                f"ev_corridor_positions_m contains {p}, outside corridor range [0, {max_pos}]"
+            )
+    overlaps = set(office_positions_m) & set(ev_corridor_positions_m)
+    if overlaps:
+        raise ValueError(f"EV positions overlap office positions: {sorted(overlaps)}")
 
     g = nx.MultiDiGraph()
     g.graph["n_floors"] = n_floors
@@ -71,6 +86,7 @@ def build_building_graph(
     g.graph["floor_height_m"] = floor_height_m
     g.graph["n_offices_per_floor"] = n_offices_per_floor
     g.graph["office_positions_m"] = tuple(office_positions_m)
+    g.graph["ev_corridor_positions_m"] = tuple(ev_corridor_positions_m)
     g.graph["n_people_only_evs"] = n_people_only_evs
     g.graph["n_shared_evs"] = n_shared_evs
 
@@ -89,13 +105,16 @@ def build_building_graph(
             f"floor_{floor_str}_center", type="floor_center", floor=floor_int
         )
 
-    for ev_id, robot_acc in zip(ev_ids, ev_robot_accessible, strict=True):
+    for ev_id, ev_pos, robot_acc in zip(
+        ev_ids, ev_corridor_positions_m, ev_robot_accessible, strict=True
+    ):
         for floor_int, floor_str in floor_labels:
             g.add_node(
                 f"ev_{ev_id}_{floor_str}",
                 type="elevator",
                 floor=floor_int,
                 ev_id=ev_id,
+                corridor_position_m=int(ev_pos),
                 robot_accessible=robot_acc,
             )
 
@@ -117,6 +136,8 @@ def build_building_graph(
                 corridor_position_m=int(corr_pos),
             )
 
+    # B1F support nodes — placed at center near floor_B1_center (per user request).
+    # Both nodes co-located ~1 m apart, both 2 m from floor_B1_center.
     g.add_node("b1f_charging", type="support", floor=-1, kind="charging")
     g.add_node("b1f_waiting", type="support", floor=-1, kind="waiting")
 
@@ -145,16 +166,24 @@ def build_building_graph(
             3.0,
         )
 
-    add_walk("b1f_charging", "floor_B1_center", 4.0)
-    add_walk("b1f_waiting", "floor_B1_center", 4.0)
+    add_walk("b1f_charging", "floor_B1_center", 2.0)
+    add_walk("b1f_waiting", "floor_B1_center", 2.0)
+    add_walk("b1f_charging", "b1f_waiting", 1.0)
 
-    for ev_id in ev_ids:
+    for ev_id, ev_pos in zip(ev_ids, ev_corridor_positions_m, strict=True):
         for floor_int, floor_str in floor_labels:
-            add_walk(
-                f"floor_{floor_str}_center",
-                f"ev_{ev_id}_{floor_str}",
-                4.0,
-            )
+            if floor_int in office_floor_ints:
+                add_walk(
+                    f"floor_{floor_str}_corr_{int(ev_pos)}",
+                    f"ev_{ev_id}_{floor_str}",
+                    1.0,
+                )
+            else:
+                add_walk(
+                    f"floor_{floor_str}_center",
+                    f"ev_{ev_id}_{floor_str}",
+                    4.0,
+                )
 
     for ev_id in ev_ids:
         for i in range(len(floor_labels)):

@@ -46,7 +46,8 @@ def test_corridor_consecutive_connectivity(baseline_graph) -> None:
 
 
 def test_office_branch_positions_match_D2(baseline_graph) -> None:
-    """D2: each office_N branches off corridor at positions [1, 4, 7, 10, 13, 16, 19] m."""
+    """D2 (revised): offices at [1, 3, 7, 10, 13, 17, 19] m to make room for EVs at [5, 15]."""
+    assert DEFAULT_OFFICE_POSITIONS_M == (1, 3, 7, 10, 13, 17, 19)
     g = baseline_graph
     for floor in (2, 3, 4, 5):
         for n_office, expected_pos in enumerate(DEFAULT_OFFICE_POSITIONS_M):
@@ -61,6 +62,33 @@ def test_office_branch_positions_match_D2(baseline_graph) -> None:
             assert data["office_id"] == n_office
 
 
+def test_ev_positions_inside_corridor_on_office_floors(baseline_graph) -> None:
+    """EV1 at corridor[5] (between O1=3 and O2=7); EV2 at corridor[15] (between O4=13 and O5=17)."""
+    g = baseline_graph
+    assert g.graph["ev_corridor_positions_m"] == (5, 15)
+    for floor in (2, 3, 4, 5):
+        # EV1 ↔ corridor[5]
+        assert g.has_edge(f"ev_EV1_{floor}", f"floor_{floor}_corr_5")
+        assert g[f"ev_EV1_{floor}"][f"floor_{floor}_corr_5"]["walk"]["distance_m"] == pytest.approx(1.0)
+        # EV2 ↔ corridor[15]
+        assert g.has_edge(f"ev_EV2_{floor}", f"floor_{floor}_corr_15")
+        assert g[f"ev_EV2_{floor}"][f"floor_{floor}_corr_15"]["walk"]["distance_m"] == pytest.approx(1.0)
+        # Office floor floor_center should NOT directly connect to EV anymore
+        assert not g.has_edge(f"floor_{floor}_center", f"ev_EV1_{floor}")
+        assert not g.has_edge(f"floor_{floor}_center", f"ev_EV2_{floor}")
+
+
+def test_b1f_support_co_located_at_center(baseline_graph) -> None:
+    """B1F charging and waiting are placed near floor_B1_center (2m walk) and adjacent to each other (1m)."""
+    g = baseline_graph
+    assert g.has_edge("b1f_charging", "floor_B1_center")
+    assert g["b1f_charging"]["floor_B1_center"]["walk"]["distance_m"] == pytest.approx(2.0)
+    assert g.has_edge("b1f_waiting", "floor_B1_center")
+    assert g["b1f_waiting"]["floor_B1_center"]["walk"]["distance_m"] == pytest.approx(2.0)
+    assert g.has_edge("b1f_charging", "b1f_waiting")
+    assert g["b1f_charging"]["b1f_waiting"]["walk"]["distance_m"] == pytest.approx(1.0)
+
+
 def test_elevator_node_attributes(baseline_graph) -> None:
     """EV1 people-only (robot_accessible=False); EV2 shared (robot_accessible=True)."""
     g = baseline_graph
@@ -73,14 +101,15 @@ def test_elevator_node_attributes(baseline_graph) -> None:
         assert ev2["robot_accessible"] is True
 
 
-def test_floor_center_connected_to_all_evs_on_floor(baseline_graph) -> None:
-    """Each floor_center has 4m walk edges to all EV nodes on that floor (and to corridor mid for office floors)."""
+def test_floor_center_evs_only_on_b1_and_1f(baseline_graph) -> None:
+    """Only B1F and 1F floor_center connect directly to EV nodes (4m).
+    Office floors (2-5) connect EVs to corridor positions instead (see test above)."""
     g = baseline_graph
-    for floor_str in ("B1", "1", "2", "3", "4", "5"):
+    for floor_str in ("B1", "1"):
         center = f"floor_{floor_str}_center"
         for ev_id in ("EV1", "EV2"):
             ev_node = f"ev_{ev_id}_{floor_str}"
-            assert g.has_edge(center, ev_node)
+            assert g.has_edge(center, ev_node), f"expected {center} → {ev_node}"
             assert g[center][ev_node]["walk"]["distance_m"] == pytest.approx(4.0)
 
 
@@ -111,6 +140,13 @@ def test_invalid_inputs_raise() -> None:
     with pytest.raises(ValueError):
         build_building_graph(office_positions_m=(1, 4, 7))  # length mismatch
     with pytest.raises(ValueError):
-        build_building_graph(office_positions_m=(1, 4, 7, 10, 13, 16, 30))  # out of range
+        build_building_graph(office_positions_m=(1, 3, 7, 10, 13, 17, 30))  # out of range
     with pytest.raises(ValueError):
         build_building_graph(n_people_only_evs=0, n_shared_evs=0)
+    with pytest.raises(ValueError):
+        build_building_graph(ev_corridor_positions_m=(5,))  # wrong length
+    with pytest.raises(ValueError):
+        build_building_graph(ev_corridor_positions_m=(5, 100))  # out of range
+    with pytest.raises(ValueError):
+        # EV overlaps office position
+        build_building_graph(ev_corridor_positions_m=(3, 15))
