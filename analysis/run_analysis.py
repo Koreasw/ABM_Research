@@ -173,15 +173,19 @@ def plot_vol_distribution(dm: DemandModel, out_path: Path) -> None:
 
 
 def plot_lead_time(lead: np.ndarray, dm: DemandModel, out_path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(9, 4.5))
     ax.hist(lead / 60, bins=40, color="cornflowerblue", alpha=0.85, edgecolor="black")
     for q, color in [(0.05, "red"), (0.5, "orange"), (0.95, "green")]:
         val = dm.lead_time_quantiles[q] / 60
         ax.axvline(val, color=color, lw=2, label=f"q{int(q * 100):02d} = {val:.1f} min")
-    ax.set_xlabel("lead time (min)")
+    ax.set_xlabel("promised ETA duration (min)  =  DLV_DEADLINE - ORD_TIME")
     ax.set_ylabel("count")
-    ax.set_title(f"DLV_DEADLINE - ORD_TIME  (n={len(lead)})")
-    ax.legend()
+    ax.set_title(
+        "Platform SLA distribution — BaeMin's algorithmic ETA promise\n"
+        f"(cook + restaurant accuracy + distance;  n={len(lead)}).  "
+        "Used as L_sla_violation target; customer renege NOT modeled."
+    )
+    ax.legend(loc="upper right")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
