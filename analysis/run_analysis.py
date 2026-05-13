@@ -37,7 +37,8 @@ from analysis.rider_arrival_model import (  # noqa: E402
     estimate_lambda_rider_K,
 )
 
-K_STRATA = [50, 100, 200, 500, 1000]
+K_STRATA = [50, 100, 200, 300]   # 1차 분석: 일관된 ~1h horizon (framework §2.6 caveat)
+# K_STRATA_TIER2 = [500, 1000]   # 2차: horizon 혼재 → 60min truncate 또는 sub-stratify 후 분석
 
 
 # ---------- helpers ----------
@@ -68,7 +69,9 @@ def plot_lambda_pooled(dm: DemandModel, out_path: Path) -> None:
     ax.bar(centers / 60, lam_h, width=4.5, color="steelblue", alpha=0.85)
     ax.set_xlabel("t (min from scenario start)")
     ax.set_ylabel("lambda(t) per scenario [orders/h]")
-    ax.set_title(f"Pooled NHPP lambda(t)  (n={dm.n_scenarios_fit} scenarios)")
+    ax.set_title(
+        f"Pooled NHPP lambda(t) (tier-1: K in {{50,100,200,300}}, n={dm.n_scenarios_fit})"
+    )
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
@@ -201,9 +204,14 @@ def plot_pickup_drop_distance(pdd: np.ndarray, out_path: Path) -> None:
 def plot_rider_arrival_lambda_by_K(
     rider_lambda_by_K: dict[int, dict], out_path: Path
 ) -> None:
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharey=False)
-    axes = axes.flatten()
+    import math
+
     items = sorted(rider_lambda_by_K.items())
+    n = len(items)
+    ncols = max(1, math.ceil(math.sqrt(n)))
+    nrows = max(1, math.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), sharey=False)
+    axes = np.atleast_1d(axes).flatten()
     for ax, (K, d) in zip(axes, items, strict=False):
         centers_min = np.array(d["bin_centers"]) / 60.0
         ax.fill_between(centers_min, d["ci_lo_per_h"], d["ci_hi_per_h"],
@@ -230,10 +238,13 @@ def main(
     figures_dir = out_dir / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    scenarios = sorted(data_root.glob("K*_*.json"))
-    print(f"discovered {len(scenarios)} scenarios under {data_root}")
+    all_scenarios = sorted(data_root.glob("K*_*.json"))
+    # 1차 분석 cohort: K ∈ {50,100,200,300}, consistent ~1h horizon (framework §2.6)
+    scenarios = [p for p in all_scenarios if load_scenario(p).K in K_STRATA]
+    print(f"discovered {len(all_scenarios)} scenarios; "
+          f"using {len(scenarios)} for tier-1 analysis (K in {K_STRATA})")
 
-    print("fitting pooled DemandModel...")
+    print("fitting pooled DemandModel (tier-1 cohort)...")
     dm_pooled = DemandModel.fit_from_corpus(scenarios)
 
     print("fitting K-stratum DemandModels...")

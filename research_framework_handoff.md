@@ -131,7 +131,22 @@ rider_type(i)      ~ Cat(p_BIKE, p_WALK, p_CAR)   // RIDERS.available_number 가
 |------------|--------------|----------|
 | K=50 시나리오 1건 | 빌딩 점심피크 1시간 (11:30–12:30) | K=50 / horizon ≈ 1h ⇒ 50 ord/h 는 500~1,000인 오피스 (1인당 시간당 주문확률 0.05~0.10) 와 자연 정합 |
 | K=50 시나리오 2건 + K=100 시나리오 9건 (점심피크 표본) | 11 replications (raw); seed 보강으로 30+ 확보 | 시나리오당 1일분 점심피크로 해석. K=50 표본이 적은 한계는 K=100을 보조 표본으로 결합하여 보완 |
-| K ∈ {50,100,200,500,1000} | 빌딩 수요 강도 sweep | 소형 오피스 → 대형 오피스 → 복합 빌딩의 점진적 확장 (§7 E2) |
+| K ∈ {50,100,200,300} | 빌딩 수요 강도 sweep — **1차 분석** | 일관된 1h horizon → 점심피크 직접 정합 (§7 E2 1차 트랙) |
+| K ∈ {500,1000} | 빌딩 수요 강도 sweep — **2차 분석** | stratum 내 horizon 혼재 (1h/2h/4h) → 60min truncate 또는 horizon sub-stratify 필요 (§7 E2 2차 트랙) |
+
+**Horizon 정합성 caveat (data1/ 실측 from STAGE 1.5)**: 시나리오의 ORD_TIME 최대값(horizon)이 K-stratum 별로 다음과 같음.
+
+| K | n | horizon |
+|---|---|---|
+| 50 | 2 | 56~59 min (≈ 1h 일관) |
+| 100 | 9 | 58~60 min (≈ 1h 일관) |
+| 200 | 9 | 59~60 min (≈ 1h 일관) |
+| 300 | 8 | 60 min (≈ 1h 일관) |
+| 500 | 5 | **혼재: 1h × 3, 2h × 1, 4h × 1** |
+| 750 | 1 | 2h (단일) |
+| 1000 | 5 | **혼재: 1h × 3, 2h × 1, 4h × 1** |
+
+K∈{500, 1000} 의 stratum 내 horizon 혼재는 λ_K(t) 적합 시 60min 이후 분자만 줄어드는 풀링 artifact를 발생시킨다 (분모 = stratum 내 시나리오 수 고정, 분자 = 해당 bin 에 주문이 있는 시나리오 수만 기여). 따라서 **1차 분석은 K∈{50,100,200,300} 만 사용**하고, K∈{500,1000} 은 (a) 60min truncate 또는 (b) horizon sub-stratify (예: "K=1000-1h" vs "K=1000-4h") 한 뒤 2차 분석에서 별도로 다룬다.
 
 **민감도 sweep 변수 ρ**: `demand_model.lambda_t(t_sec, scale=ρ)` 의 `scale` 인자는 *민감도 분석용 수요 강도 배수* 로 정의 (baseline ρ=1.0). Generative 모드의 STAGE 4 stress test 에 한정 사용.
 
@@ -184,12 +199,13 @@ rider_type(i)      ~ Cat(p_BIKE, p_WALK, p_CAR)   // RIDERS.available_number 가
 ### 4.1 분석 항목 (공식 스키마 기준)
 
 #### 4.1.1 K-stratum별 NHPP λ_K(t) 추정
-- **풀링(pooled) 추정**: 전체 시나리오에 대해 ORD_TIME 5분 bin piecewise-constant λ(t)
-- **K-stratum 추정**: K ∈ {50, 100, 200, 500, 1000} 별 λ_K(t) 분리 산출. **K=50 stratum 의 horizon ≈ 1 h (3,000~4,000 s)** 가 빌딩 점심피크 윈도우와 직접 정합
-- **K-stratum 부트스트랩 CI**: K=50 시나리오 표본이 2건으로 적은 점을 보완하기 위해 K=50 + K=100 보조 표본을 결합, 시나리오 단위 부트스트랩 (B=1000 resampling) 으로 시점별 95% CI 산출
+- **풀링(pooled) 추정**: 전체 시나리오에 대해 ORD_TIME 5분 bin piecewise-constant λ(t). **주의**: pooled 추정은 시나리오별 horizon 차이로 인한 60/120/240min cliff artifact 가 발생하므로 *χ² 비정상성 evidence 용도* 로만 사용하고 시뮬레이션 입력으로는 직접 쓰지 않는다.
+- **K-stratum 추정 (1차)**: K ∈ **{50, 100, 200, 300}** 별 λ_K(t) 분리 산출. 모두 horizon ≈ 1h 로 일관 (§2.6 caveat table) → 빌딩 점심피크 윈도우와 직접 정합.
+- **K-stratum 추정 (2차)**: K ∈ {500, 1000} 은 stratum 내 horizon 혼재로 (a) 60min truncate 또는 (b) horizon sub-stratify 처리 후 별도 트랙으로 분석.
+- **K-stratum 부트스트랩 CI**: K=50 시나리오 표본이 2건으로 적은 점을 보완하기 위해 K=50 + K=100 + K=200 + K=300 보조 표본을 결합, 시나리오 단위 부트스트랩 (B=1000 resampling) 으로 시점별 95% CI 산출.
 - **검정**: χ² 정상성 검정 (H0: uniform)
-- **실증 결과 (pooled)**: n=29,250, horizon ≈ 8 h, 피크 t≈12.5 min (λ_peak ≈ 349 ord/h per scenario), mean ≈ 70 ord/h. χ² non-stationarity p < 1e-4
-- **K=50 stratum 해석**: 시나리오당 약 50건이 1시간 윈도우에 분포 → 시나리오당 평균 50 ord/h, 피크 약 100~150 ord/h. 500~1,000인 오피스 빌딩의 점심피크와 직접 부합
+- **실증 결과 (1차 분석, K∈{50,100,200,300}, 28개 시나리오, 5,200 주문)**: STAGE 1.5 산출 시점 — cook mean 17.2 min (Gamma shape 4.83 / scale 213.4), lead q05/q50/q95 = 36.1/51.0/74.2 min, VOL mean 27.4, pickup-drop mean 1.57 km.
+- **K=50 stratum 해석**: 시나리오당 약 50건이 1시간 윈도우에 분포 → 시나리오당 평균 50 ord/h, 피크 약 100~150 ord/h. 500~1,000인 오피스 빌딩의 점심피크와 직접 부합.
 
 #### 4.1.2 음식 준비 시간 F_prep
 - COOK_TIME ([6]) 에 Lognormal / Weibull / Gamma 를 `floc=0` MLE 피팅, AIC/BIC 비교
