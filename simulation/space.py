@@ -20,6 +20,15 @@ DEFAULT_OFFICE_SIDES: tuple[str, ...] = (
 )
 DEFAULT_EV_CORRIDOR_POSITIONS_M: tuple[int, ...] = (11, 12)
 
+LOBBY_ZONE_NODES: tuple[str, ...] = (
+    "lobby_entry",
+    "lobby_handoff_counter",
+    "lobby_queue_zone",
+    "lobby_locker_bank",
+    "lobby_robot_pickup_zone",
+    "lobby_direct_corridor",
+)
+
 
 def build_building_graph(
     n_floors: int = 5,
@@ -154,10 +163,10 @@ def build_building_graph(
                 side=side,
             )
 
-    # B1F support nodes — placed at center near floor_B1_center (per user request).
-    # Both nodes co-located ~1 m apart, both 2 m from floor_B1_center.
+    # B1F support: charging dock only. Robot idle/standby lives at
+    # lobby_robot_pickup_zone (1F, added in STAGE 2.3); the robot only
+    # returns to B1F when SOC drops below RobotAgent's charge threshold.
     g.add_node("b1f_charging", type="support", floor=-1, kind="charging")
-    g.add_node("b1f_waiting", type="support", floor=-1, kind="waiting")
 
     def add_walk(a: str, b: str, distance_m: float) -> None:
         g.add_edge(a, b, key="walk", type="walk", distance_m=distance_m)
@@ -185,8 +194,6 @@ def build_building_graph(
         )
 
     add_walk("b1f_charging", "floor_B1_center", 2.0)
-    add_walk("b1f_waiting", "floor_B1_center", 2.0)
-    add_walk("b1f_charging", "b1f_waiting", 1.0)
 
     for ev_id, ev_pos in zip(ev_ids, ev_corridor_positions_m, strict=True):
         for floor_int, floor_str in floor_labels:
@@ -220,3 +227,218 @@ def build_building_graph(
                 )
 
     return g
+
+
+def add_lobby_handoff_zones(
+    g: nx.MultiDiGraph,
+    n_locker_compartments: int = 4,
+    queue_capacity: int = 8,
+) -> nx.MultiDiGraph:
+    """Add the 1F lobby's six handoff zones + M locker compartments to g.
+
+    Adds (all on floor=1):
+        - 6 zone nodes (type='lobby_zone'):
+          lobby_entry, lobby_handoff_counter, lobby_queue_zone,
+          lobby_locker_bank, lobby_robot_pickup_zone, lobby_direct_corridor
+        - M `lobby_locker_compartment_{i}` nodes (type='locker_compartment'),
+          attached to lobby_locker_bank at 0.5 m.
+
+    Walk edges added (all bidirectional):
+        - Each zone ↔ floor_1_center (hub):
+            entry 4m | counter/queue/locker 3m | robot_pickup/direct 2m
+        - counter ↔ queue          : 2 m  (H1 synchronous → H2 queue flow)
+        - locker_bank ↔ robot_pickup : 2 m  (robot accesses locker face)
+        - robot_pickup ↔ direct_corridor : 2 m  (robot near EV vestibule)
+        - direct_corridor ↔ ev_EV1_1 / ev_EV2_1 : 2 m each  (H0 direct EV)
+        - each compartment ↔ locker_bank : 0.5 m
+
+    Per §17 design pivot, lobby_robot_pickup_zone is the robot's idle home
+    (pickup + standby co-located). RobotAgent only returns to b1f_charging
+    when SOC drops below threshold.
+    """
+    if n_locker_compartments < 1:
+        raise ValueError(
+            f"n_locker_compartments must be >= 1; got {n_locker_compartments}"
+        )
+    if queue_capacity < 1:
+        raise ValueError(f"queue_capacity must be >= 1; got {queue_capacity}")
+    if "floor_1_center" not in g:
+        raise ValueError(
+            "Graph must contain floor_1_center (call build_building_graph first)"
+        )
+    if any(zone in g for zone in LOBBY_ZONE_NODES):
+        raise ValueError(
+            "Lobby zones already present (add_lobby_handoff_zones called twice?)"
+        )
+
+    zone_capacities: dict[str, int | None] = {
+        "lobby_entry": None,             # ∞ (external boundary)
+        "lobby_handoff_counter": 1,      # H1 synchronous counter (framework §5.4)
+        "lobby_queue_zone": queue_capacity,
+        "lobby_locker_bank": None,
+        "lobby_robot_pickup_zone": 2,    # small fleet (1–3 robots)
+        "lobby_direct_corridor": None,
+    }
+    for zone in LOBBY_ZONE_NODES:
+        g.add_node(
+            zone,
+            type="lobby_zone",
+            floor=1,
+            capacity=zone_capacities[zone],
+        )
+
+    for i in range(n_locker_compartments):
+        g.add_node(
+            f"lobby_locker_compartment_{i}",
+            type="locker_compartment",
+            floor=1,
+            compartment_id=i,
+            parent_zone="lobby_locker_bank",
+        )
+
+    g.graph["n_locker_compartments"] = n_locker_compartments
+    g.graph["queue_capacity"] = queue_capacity
+
+    def add_walk(a: str, b: str, distance_m: float) -> None:
+        g.add_edge(a, b, key="walk", type="walk", distance_m=distance_m)
+        g.add_edge(b, a, key="walk", type="walk", distance_m=distance_m)
+
+    floor_1_center_distances: dict[str, float] = {
+        "lobby_entry": 4.0,
+        "lobby_handoff_counter": 3.0,
+        "lobby_queue_zone": 3.0,
+        "lobby_locker_bank": 3.0,
+        "lobby_robot_pickup_zone": 2.0,
+        "lobby_direct_corridor": 2.0,
+    }
+    for zone, dist in floor_1_center_distances.items():
+        add_walk(zone, "floor_1_center", dist)
+
+    add_walk("lobby_handoff_counter", "lobby_queue_zone", 2.0)
+    add_walk("lobby_locker_bank", "lobby_robot_pickup_zone", 2.0)
+    add_walk("lobby_robot_pickup_zone", "lobby_direct_corridor", 2.0)
+    add_walk("lobby_direct_corridor", "ev_EV1_1", 2.0)
+    add_walk("lobby_direct_corridor", "ev_EV2_1", 2.0)
+
+    for i in range(n_locker_compartments):
+        add_walk(
+            f"lobby_locker_compartment_{i}", "lobby_locker_bank", 0.5
+        )
+
+    return g
+
+
+def floor_of(node: str) -> int | None:
+    """Extract floor number from a node name (B1F → -1).
+
+    Parsing rules (kept in sync with naming in build_building_graph):
+        floor_{F}_center / floor_{F}_corr_{P} / floor_{F}_office_{N} → F
+        ev_{EVID}_{F}                                                → F
+        b1f_charging                                                 → -1
+        anything else (e.g., future lobby_zone)                      → None
+
+    F is "B1" → -1, otherwise int("F").
+    """
+    if node == "b1f_charging":
+        return -1
+    if node.startswith("floor_"):
+        floor_str = node.split("_", 2)[1]
+        return -1 if floor_str == "B1" else int(floor_str)
+    if node.startswith("ev_"):
+        floor_str = node.rsplit("_", 1)[1]
+        return -1 if floor_str == "B1" else int(floor_str)
+    return None
+
+
+def offices_on_floor(g: nx.MultiDiGraph, floor: int) -> list[str]:
+    """Return office node names on the given floor, sorted by office_id."""
+    matches = [
+        (d["office_id"], n)
+        for n, d in g.nodes(data=True)
+        if d.get("type") == "office" and d.get("floor") == floor
+    ]
+    matches.sort()
+    return [n for _, n in matches]
+
+
+def elevator_nodes(
+    g: nx.MultiDiGraph, ev_id: str | None = None
+) -> dict[str, list[str]]:
+    """Return {ev_id: [floor_node, ...]} for elevator nodes.
+
+    Each inner list is sorted by floor ascending (B1F first via floor=-1).
+    If ev_id is given, only that EV's mapping is returned.
+    """
+    by_ev: dict[str, list[tuple[int, str]]] = {}
+    for n, d in g.nodes(data=True):
+        if d.get("type") != "elevator":
+            continue
+        nid = d["ev_id"]
+        if ev_id is not None and nid != ev_id:
+            continue
+        by_ev.setdefault(nid, []).append((d["floor"], n))
+    return {k: [n for _, n in sorted(v)] for k, v in by_ev.items()}
+
+
+def shortest_walk_path(
+    g: nx.MultiDiGraph,
+    source: str,
+    target: str,
+    robot: bool = False,
+) -> tuple[list[str], float]:
+    """Shortest path between source and target minimizing walking distance.
+
+    Walk edges contribute their `distance_m`; `ev` edges contribute 0 (vertical
+    travel is free for this query — ElevatorAgent models the actual EV time
+    and queue waiting separately in STAGE 3).
+
+    If robot=True, people-only elevator nodes (robot_accessible=False) are
+    excluded from the search so the path is guaranteed to avoid EV1.
+
+    Returns:
+        (path_nodes, walk_distance_m)
+
+    Raises:
+        nx.NodeNotFound: if source or target is not in the graph
+        nx.NetworkXNoPath: if no path exists under the constraints
+    """
+    if source not in g:
+        raise nx.NodeNotFound(f"source {source!r} not in graph")
+    if target not in g:
+        raise nx.NodeNotFound(f"target {target!r} not in graph")
+
+    if robot:
+        nodes_to_keep = [
+            n for n, d in g.nodes(data=True)
+            if not (d.get("type") == "elevator" and d.get("robot_accessible") is False)
+        ]
+        search_g = g.subgraph(nodes_to_keep)
+    else:
+        search_g = g
+
+    def _edge_weight(u: str, v: str, edge_data: dict) -> float:
+        # MultiDiGraph: edge_data is {key: attrs, ...} for parallel edges u→v.
+        best = float("inf")
+        for attrs in edge_data.values():
+            if attrs.get("type") == "walk":
+                w = float(attrs["distance_m"])
+            elif attrs.get("type") == "ev":
+                w = 0.0
+            else:
+                w = 0.0
+            if w < best:
+                best = w
+        return best if best != float("inf") else 0.0
+
+    path: list[str] = nx.shortest_path(
+        search_g, source=source, target=target, weight=_edge_weight
+    )
+
+    total_walk = 0.0
+    for u, v in zip(path[:-1], path[1:]):
+        edge_data = search_g.get_edge_data(u, v)
+        for attrs in edge_data.values():
+            if attrs.get("type") == "walk":
+                total_walk += float(attrs["distance_m"])
+                break
+    return path, total_walk

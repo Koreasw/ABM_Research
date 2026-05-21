@@ -70,7 +70,7 @@
 | `office` | `floor_{F}_office_{N}` (F=2..5, N=0..6) | **28** (7 × 4 office 층) | 고객 인도 endpoint (D2) |
 | `elevator` | `ev_EV1_{F}`, `ev_EV2_{F}` (F = B1, 1..5) | **12** (2 EV × 6 floor) | EV 호출/하차 노드 |
 | `lobby_zone` | `lobby_entry`, `lobby_handoff_counter`, `lobby_queue_zone`, `lobby_locker_bank`, `lobby_robot_pickup_zone`, `lobby_direct_corridor` | **6** | 1F 6종 핸드오프 zone |
-| `support` | `b1f_charging`, `b1f_waiting` | **2** | B1F 서비스 zone |
+| `support` | `b1f_charging` | **1** | B1F 충전 도크 (로봇 상시 대기는 1F `lobby_robot_pickup_zone` — §17) |
 | `floor_corridor` | `floor_1_corr_{P}` | **20** | 1F 로비 통로 (zone 간 연결) |
 | **합계** | | **~154** | (이전 800m²/100m 사양 578개 대비 4배 축소) |
 
@@ -96,8 +96,7 @@ floor_center ↔ corridor[10]            : 3.0 m  (복도 중앙 진입)
 office_{N} ↔ corridor[pos[N]]          : 3.0 m  (사무실 분기, D2)
   where pos = [1, 4, 7, 10, 13, 16, 19]
 floor_center ↔ ev_EVx_floor            : 4.0 m
-b1f_charging ↔ ev_EV2_B1               : 4.0 m
-b1f_waiting ↔ ev_EV2_B1                : 4.0 m
+b1f_charging ↔ floor_B1_center         : 2.0 m  (구현: 중앙 배치, §15.5)
 ev_EV{id}_floor_i ↔ ev_EV{id}_floor_j  : ElevatorKinematics.travel_time_sec() 동적
 ```
 
@@ -509,9 +508,9 @@ STAGE 2.1 부터 순차 진행:
 | corridor | **80** | 4 office floors × 20 positions (0..19, 1m grid) |
 | office | **32** | 4 floors × 8 offices (4 north + 4 south) |
 | elevator | 12 | 2 EVs × 6 floors |
-| support | 2 | b1f_charging, b1f_waiting |
-| **합계 노드** | **132** | |
-| 모든 directional edges | **314** | walk + ev edges (bidirectional pair = 2 directed) |
+| support | **1** | b1f_charging (b1f_waiting 제거 — §17 design pivot) |
+| **합계 노드** | **131** | (이전 132에서 b1f_waiting 1개 제거) |
+| 모든 directional edges | **310** | walk + ev edges (bidirectional pair = 2 directed); b1f_waiting 관련 4개 directed walk edges 제거됨 |
 
 ### 15.5 거리 attribute 규칙 (구현 확정)
 
@@ -522,9 +521,7 @@ STAGE 2.1 부터 순차 진행:
 | floor_center ↔ corridor[mid] | **3.0 m** | (office 층만; mid = 복도 중앙 position) |
 | floor_center ↔ ev_node | **4.0 m** | B1F·1F 만 (office 층은 EV 직접 corridor 연결) |
 | corridor[ev_pos] ↔ ev_node | **1.0 m** | office 층에서 EV 진입 |
-| b1f_charging ↔ floor_B1_center | **2.0 m** | 중앙 배치 (user 요청) |
-| b1f_waiting ↔ floor_B1_center | **2.0 m** | 중앙 배치 |
-| b1f_charging ↔ b1f_waiting | **1.0 m** | 인접 |
+| b1f_charging ↔ floor_B1_center | **2.0 m** | 중앙 배치 (§17 이후 단일 support 노드) |
 
 ### 15.6 평면도 진화 기록 (사용자 피드백 반영 과정)
 
@@ -585,7 +582,7 @@ STAGE 2.1 부터 순차 진행:
 - [x] 한국 100평 표준 사무 빌딩 평면도와 정합
 - [x] 8개 사무실 모두 corr branch 점이 박스 중심에 정렬 (Δ ≤ 0.5m)
 - [x] EV1 / EV2 분리 (robot_accessible 플래그)
-- [x] B1F 충전·대기 중앙 공동 배치
+- [x] B1F 충전 도크 중앙 배치 (대기는 §17 이후 1F로 이전)
 - [x] 10 unit tests pass
 - [x] 빌딩 section + 단일 층 figure 2장 산출
 
@@ -602,3 +599,302 @@ STAGE 2.2 는 다음 query API 를 추가하여 그래프 위 *경로/거리 계
 - `b1f_charging → 5F-office_3` 경로의 총 거리·노드 시퀀스 정확성
 - `robot=True` 시 EV1 회피하고 EV2 만 경유
 - `offices_on_floor(g, 5)` 가 8개 office 반환
+
+---
+
+## 16. STAGE 2.2 완료 기록 (이행 로그)
+
+> 그래프 위 query API (경로·거리·층·노드 lookup) 를 추가하여 STAGE 3 의 모든
+> Agent 가 공통 인터페이스로 그래프를 소비할 수 있게 함.
+
+### 16.1 산출물 요약
+
+| 파일 | 변경 | 추가 라인 |
+|---|---|---|
+| `simulation/space.py` | 4개 query 함수 append | ~120 |
+| `tests/test_space.py` | STAGE 2.2 테스트 8개 append | ~95 |
+
+### 16.2 구현한 Query API
+
+| 함수 | 시그니처 | 동작 |
+|---|---|---|
+| `floor_of` | `(node: str) -> int \| None` | 노드명 파싱 → B1F=-1, 1~5, lobby_zone 류는 None |
+| `offices_on_floor` | `(g, floor: int) -> list[str]` | `office_id` 오름차순 정렬된 노드 리스트 |
+| `elevator_nodes` | `(g, ev_id: str \| None = None) -> dict[str, list[str]]` | `{ev_id: [floor_nodes]}`; 내부 리스트는 층 오름차순 (B1F 먼저) |
+| `shortest_walk_path` | `(g, source, target, robot=False) -> (list[str], float)` | walk edge weight = `distance_m`, ev edge weight = 0; robot=True 시 EV1 제외 |
+
+### 16.3 핵심 설계 결정
+
+| # | 결정 | 사유 |
+|---|---|---|
+| **Q1** | `shortest_walk_path` 의 EV edge weight = **0** | "보행 거리 최소화" 의미론. EV 이동 시간/대기는 STAGE 3 ElevatorAgent 가 모델링 (framework §5.3) |
+| **Q2** | `robot=True` 는 EV1 노드를 **subgraph 에서 제외** | EV1 의 `robot_accessible=False` 플래그 단일 진실 소스. 별도 path-filter 없이 그래프 토폴로지로 제약 표현 |
+| **Q3** | `floor_of` 는 **노드명 파싱** (graph 인자 없음) | 빠르고 stateless. lobby_zone 처럼 floor=None 인 노드도 자연스럽게 처리 |
+| **Q4** | `corridor_density` 는 STAGE 2.2 **범위 외** | §15.11 에서 "선택" 표기. 혼잡 모델은 STAGE 3 PedestrianAgent 와 함께 다룰 때 더 명확 |
+
+### 16.4 검증 시나리오 (실측 결과)
+
+`b1f_charging → floor_5_office_2` (office_3 / 사무실 3호 @ corr[13]):
+
+| 구간 | 거리 | 누적 |
+|---|---|---|
+| b1f_charging → floor_B1_center | 2 m | 2 |
+| floor_B1_center → ev_EV2_B1 | 4 m | 6 |
+| ev_EV2_B1 → ev_EV2_5 *(ev edge, weight=0)* | 0 | 6 |
+| ev_EV2_5 → floor_5_corr_12 | 1 m | 7 |
+| floor_5_corr_12 → floor_5_corr_13 | 1 m | 8 |
+| floor_5_corr_13 → floor_5_office_2 | 3 m | **11 m** |
+
+→ `shortest_walk_path` 반환: `(path, 11.0)`. `robot=True` 도 동일 (이미 EV2 사용).
+
+`b1f_charging → floor_5_office_0` (사무실 1호 @ corr[3]) — EV1 vs EV2 분기 입증:
+
+| 모드 | 경유 EV | corridor 이동 | 총 walk |
+|---|---|---|---|
+| `robot=False` | EV1 @ corr[11] | 11 → 3 = 8 m | **18 m** |
+| `robot=True` (EV1 제외) | EV2 @ corr[12] | 12 → 3 = 9 m | **19 m** |
+
+→ Δ 1 m: EV2 가 EV1 보다 corridor center 에서 1m 더 동쪽에 있는 만큼 동쪽 사무실로 갈 때 +1m / 서쪽 사무실로 갈 때 +1m 손해 (대칭).
+
+### 16.5 테스트 인벤토리 (8개 추가)
+
+| 테스트 | 검증 내용 |
+|---|---|
+| `test_floor_of_parses_all_node_kinds` | floor_, ev_, b1f_, lobby_ 4종 모두 |
+| `test_offices_on_floor_returns_all_eight` | floor=2~5 → 8개; floor=-1, 1 → 빈 리스트 |
+| `test_elevator_nodes_all_and_filtered` | `ev_id=None` 모든 EV / `ev_id="EV2"` 만 |
+| `test_shortest_walk_path_same_floor` | 2F corr[0]→corr[19] = 19 m, EV 미경유 |
+| `test_shortest_walk_path_b1_charging_to_5f_office` | 11 m + EV 노드 1회 경유 |
+| `test_shortest_walk_path_robot_avoids_ev1` | path 에 `ev_EV1_*` 없음, `ev_EV2_*` 있음 |
+| `test_shortest_walk_path_robot_picks_longer_corridor` | EV1 18 m vs EV2 19 m (office_0) |
+| `test_shortest_walk_path_invalid_nodes_raise` | `NodeNotFound` for source/target |
+
+### 16.6 검증 통계
+
+- **tests/test_space.py**: 18 tests pass (10 STAGE 2.1 + 8 STAGE 2.2)
+- **전체 suite**: **66 passed, 5 skipped** (이전 58 → +8)
+- skipped 5개는 STAGE 2.4 (elevator_physics) / STAGE 3 (agents, cost, locker)
+
+### 16.7 STAGE 2.2 완료 조건 체크
+
+- [x] `floor_of` 4종 노드 모두 파싱
+- [x] `offices_on_floor(g, 5)` 가 8개 office 반환
+- [x] `elevator_nodes(g)` 가 `{EV1: 6, EV2: 6}` 반환, ev_id 필터 동작
+- [x] `shortest_walk_path` 가 `b1f_charging → 5F-office_2` = 11 m 정확 산출
+- [x] `robot=True` 가 EV1 회피 + EV2 경유 (EV2-only subgraph)
+- [x] 8 new unit tests pass
+
+### 16.8 STAGE 2.3 진입 조건
+
+STAGE 2.3 는 `add_lobby_handoff_zones()` 로 1F 로비에 6종 핸드오프 zone 노드를 추가:
+- `lobby_entry`, `lobby_handoff_counter`, `lobby_queue_zone`, `lobby_locker_bank`,
+  `lobby_robot_pickup_zone`, `lobby_direct_corridor`
+- `n_locker_compartments` 파라미터 sweep ∈ {2, 4, 8} 호환
+- `floor_of("lobby_*")` 가 1 (또는 None) 반환하도록 정합
+- **§17 design pivot 반영**: `lobby_robot_pickup_zone` 은 *픽업 + 상시 대기 겸용*.
+  RobotAgent (STAGE 3) 가 idle 상태일 때 이 노드에 머무름.
+
+**검증 시나리오**:
+- locker M=2 → 2 노드, M=8 → 8 노드 생성
+- 6종 zone 모두 `floor_1_center` 와 walk-edge 연결
+- `shortest_walk_path(g, "lobby_entry", "floor_5_office_*")` 가 정상 동작
+- `shortest_walk_path(g, "lobby_robot_pickup_zone", "floor_3_office_2")` 가 *EV 1회만* 경유 (B1F 미거침)
+
+---
+
+## 17. Design Pivot: 로봇 상시 대기 위치 = 1F (B1F는 충전 전용)
+
+> STAGE 2.2 완료 후 사용자 피드백으로 합의된 설계 변경. 모든 변경은 STAGE 2 그래프 사양과 STAGE 3 RobotAgent 설계에 영향.
+
+### 17.1 변경 이유
+
+**문제 식별**: B1F 에 충전소·로봇 대기소를 함께 두면, 매 주문마다 로봇이 다음 동선을 강제 수행하게 됨:
+
+```
+B1F 대기 → (EV2) → 1F 픽업 → (EV2) → N층 고객 → (EV2) → B1F 복귀
+        ↑ 불필요    ↑ 픽업     ↑ 배달          ↑ 불필요
+```
+
+→ 매 주문 당 EV2 호출 4회·왕복 2회. H0 (라이더 직접 배달) 는 2회로 끝나 비교 시 H1 가 *구조적으로 불리*.
+
+→ H1 의 진짜 가치 (라이더 회수율 ↑, 라이더 building-internal time 단축) 가 측정되기 전에 로봇 inefficiency 가 결과를 dominate.
+
+### 17.2 채택안 — Option #1: "1F 로비 상시 대기, B1F 충전 전용"
+
+| 항목 | Before | After |
+|---|---|---|
+| 로봇 idle 위치 | `b1f_waiting` (B1F) | `lobby_robot_pickup_zone` (1F, STAGE 2.3) |
+| 충전 위치 | `b1f_charging` (B1F) | 동일 (`b1f_charging`) |
+| 충전 정책 | 매번 복귀 | RobotAgent (STAGE 3) 가 SOC<θ 일 때만 B1F 호출 |
+| 픽업 대기 시간 | EV2 호출 + B1F→1F 이동 | 0초 (이미 1F) |
+| 주문당 EV2 호출 수 | 4 | 2 (1F→N층, N층→1F) |
+
+### 17.3 비교 (검토 안 1·2·3)
+
+| 안 | 핵심 | 채택 여부 / 사유 |
+|---|---|---|
+| **#1** 1F 로비 상시 대기, B1F 충전 전용 | 픽업 즉시, 충전만 임계점 호출 | **채택** — 현실 정합도 최고 (Naver 1784, KT 등 실 배치). 그래프 변경 최소. |
+| #2 라이더가 B1F 서비스 입구로 진입 | 픽업·대기 모두 B1F 에서 발생 | 미채택 — 100평 소형 빌딩은 별도 서비스 출입구가 흔치 않음 (face validity 약함). |
+| #3 마지막 배달 층에서 대기 (anticipatory) | 다음 주문이 같은 층이면 EV 미사용 | 미채택 — 단일 로봇·하루 ~117건 규모에서 같은 층 연속 주문 확률 낮아 효과 미미; 정책 복잡도만 ↑. |
+
+### 17.4 그래프 변경 (STAGE 2.1 ↔ Post-pivot)
+
+| 변경점 | 영향 |
+|---|---|
+| `b1f_waiting` 노드 제거 | support 노드 2 → 1, 전체 노드 132 → **131** |
+| `b1f_charging ↔ b1f_waiting` walk edge 제거 | 1개 walk edge (2 directed) 제거 |
+| `b1f_waiting ↔ floor_B1_center` walk edge 제거 | 1개 walk edge (2 directed) 제거 |
+| `floor_of("b1f_waiting")` lookup 제거 | API 변경 없음, 한 줄 제거 |
+
+→ STAGE 2.1 산출 baseline 의 다른 측면 (사무실 8개, EV1·EV2 위치, 거리 attribute) 은 **모두 그대로**.
+
+### 17.5 STAGE 3 RobotAgent 에 미치는 영향 (사전 정의)
+
+- `home_node = "lobby_robot_pickup_zone"` — idle 상태의 디폴트 위치
+- `charge_node = "b1f_charging"` — SOC < θ_charge (default: 30%) 일 때만 이동
+- 충전 임계 정책 (`θ_charge`, `θ_resume`) 은 RobotAgent 파라미터
+- Idle 위치는 다른 zone 사용 (예: `lobby_handoff_counter` 의 픽업 face) 이 아니라 *고정* — 1F lobby 의 zone 간 walk-edge 거리는 STAGE 2.3 에서 결정
+
+### 17.6 시각화 산출물 영향
+
+기존 `paper/figures/draft_building_section.png` 와 `draft_floor_plan.png` 는 *B1F 충전·대기 2개 박스* 가 그려져 있음. STAGE 2.6 의 `visualize_space.py` 가 정식 figure 를 산출할 때:
+- B1F: "Robot Charging Dock" 단일 박스로 표시
+- 1F lobby: `lobby_robot_pickup_zone` 박스에 "Robot Standby + Pickup" 라벨
+
+이 시점에 draft 파일들 교체.
+
+### 17.7 framework 정합
+
+`research_framework_handoff.md` §5.1 ASCII art 및 §5.3 "충전소 / 로봇 대기소 | B1F" 행을 §17 채택안과 일치하도록 동기 업데이트 (별도 commit).
+
+### 17.8 검증
+
+- `simulation/space.py` b1f_waiting 제거 ✓
+- `tests/test_space.py` test_baseline_node_count_breakdown 의 support=1 / 131-node 검증 + `"b1f_waiting" not in g` assertion ✓
+- 기존 b1f_support_co_located 테스트는 `test_b1f_charging_dock_co_located_at_center` 로 rename, charging 단일 검증 ✓
+- 전체 suite: **66 passed, 5 skipped** (변동 없음)
+
+---
+
+## 18. STAGE 2.3 완료 기록 (이행 로그)
+
+> 1F 로비에 6종 핸드오프 zone 노드 + locker compartment sweep 노드를 추가하여
+> H0–H3 모드와 §17 로봇 idle 위치를 그래프 위에 표현.
+
+### 18.1 산출물 요약
+
+| 파일 | 변경 | 추가 라인 |
+|---|---|---|
+| `simulation/space.py` | `LOBBY_ZONE_NODES` 상수 + `add_lobby_handoff_zones()` | ~100 |
+| `tests/test_space.py` | STAGE 2.3 테스트 7개 append | ~120 |
+
+### 18.2 토폴로지 (1F 로비 layout)
+
+```
+        lobby_entry  ──4m──┐
+                            │
+        lobby_handoff_counter ──3m──┤
+                  ↕ 2m              │
+        lobby_queue_zone     ──3m──┤
+                                    ├── floor_1_center ─── (existing)
+        lobby_locker_bank     ──3m──┤    │
+            ↕ 0.5m each              │   │ 4m each
+        M compartments               │   ├── ev_EV1_1
+            ↕ 2m                     │   └── ev_EV2_1
+        lobby_robot_pickup_zone ──2m─┤
+            ↕ 2m                     │
+        lobby_direct_corridor  ──2m──┘
+            ↕ 2m each ↘
+                       └── ev_EV1_1, ev_EV2_1   (H0 vestibule)
+```
+
+### 18.3 노드 인벤토리 (M=4 default)
+
+| 노드 | 타입 | 용량 | 비고 |
+|---|---|---|---|
+| `lobby_entry` | lobby_zone | None (∞) | 외부 진입 |
+| `lobby_handoff_counter` | lobby_zone | **1** | H1 동기 카운터 |
+| `lobby_queue_zone` | lobby_zone | **8** (default `queue_capacity`) | H2 FCFS 큐 |
+| `lobby_locker_bank` | lobby_zone | None (M 으로 결정) | H3 parent |
+| `lobby_robot_pickup_zone` | lobby_zone | **2** | 픽업 + 로봇 idle (§17) |
+| `lobby_direct_corridor` | lobby_zone | None | H0 EV vestibule |
+| `lobby_locker_compartment_{0..M-1}` | locker_compartment | None | M sweep ∈ {2,4,8} |
+| **합계 노드 (graph)** | | **131 + 6 + M = 141** (M=4) | |
+
+### 18.4 엣지 인벤토리 (M=4 default)
+
+| 엣지 종류 | 거리 | 개수 (directed) |
+|---|---|---|
+| zone ↔ floor_1_center | 4 / 3 / 3 / 3 / 2 / 2 m | 12 |
+| counter ↔ queue (H1→H2) | 2 m | 2 |
+| locker_bank ↔ robot_pickup | 2 m | 2 |
+| robot_pickup ↔ direct_corridor | 2 m | 2 |
+| direct_corridor ↔ ev_EV1_1 / ev_EV2_1 | 2 m each | 4 |
+| compartment ↔ locker_bank | 0.5 m | 2M (8) |
+| **합계** | | **30** (M=4); 310 → **340** |
+
+### 18.5 핵심 설계 결정
+
+| # | 결정 | 사유 |
+|---|---|---|
+| **L1** | 6 zone 모두 floor_1_center 와 직접 연결 (hub-spoke) | §16.8 검증 시나리오 충족, query API 단순화 |
+| **L2** | `lobby_robot_pickup_zone` 용량 = **2** | 소형 빌딩 fleet (framework §5.4 "2~3대 가정") |
+| **L3** | `lobby_direct_corridor` ↔ EV1/EV2 직접 연결 (2m) | H0 라이더가 floor_1_center 우회 없이 EV 접근 |
+| **L4** | locker compartment 와 bank 간 walk = **0.5 m** | 1m corridor 해상도보다 작게 — *locker scale* 명시 |
+| **L5** | `floor_of("lobby_*")` = **None** (graph attr 는 1) | name-parser 와 graph-attribute 의 책임 분리. STAGE 3 agent 는 `g.nodes[n]["floor"]` 사용 |
+| **L6** | locker compartment 에 `parent_zone` attribute | STAGE 3 LockerAgent 가 bank → compartments 빠르게 찾도록 |
+
+### 18.6 §17 핵심 시나리오 검증
+
+`lobby_robot_pickup_zone → floor_3_office_2` (robot=True):
+
+| 구간 | 거리 | 누적 |
+|---|---|---|
+| lobby_robot_pickup_zone → lobby_direct_corridor | 2 m | 2 |
+| lobby_direct_corridor → ev_EV2_1 | 2 m | 4 |
+| ev_EV2_1 → ev_EV2_3 *(ev edge, weight=0)* | 0 | 4 |
+| ev_EV2_3 → floor_3_corr_12 | 1 m | 5 |
+| floor_3_corr_12 → floor_3_corr_13 | 1 m | 6 |
+| floor_3_corr_13 → floor_3_office_2 | 3 m | **9 m** |
+
+→ 비교: 기존 (§17 이전 설계) 의 `b1f_waiting → floor_3_office_2` 는 17+ m, 매 주문마다 4회 EV 호출 발생.
+→ §17 채택 후: **9 m, EV2 1회 호출**. 같은 office 까지 *왕복 18m* (즉시 1F idle 복귀 가능).
+
+### 18.7 테스트 인벤토리 (7개 추가)
+
+| 테스트 | 검증 내용 |
+|---|---|
+| `test_lobby_six_base_zones_added` | 6 zone 노드명·type·floor·capacity (None/1/8/None/2/None) |
+| `test_lobby_locker_compartments_sweep` | M ∈ {2,4,8} 각각 M 개 compartment + 0.5m 엣지 + `parent_zone` attribute |
+| `test_lobby_zones_all_connected_to_floor_1_center` | 6 zone 모두 hub 연결, 거리 (4/3/3/3/2/2 m) |
+| `test_lobby_direct_corridor_to_evs` | direct_corridor ↔ EV1/EV2 각 2 m |
+| `test_robot_idle_to_office_no_b1_detour` | **§17 critical**: B1F 미경유 + EV2 1회 + walk 9 m |
+| `test_floor_of_lobby_nodes_returns_none` | name-parser 가 lobby_*, locker_compartment 모두 None; graph attr 는 1 |
+| `test_add_lobby_invalid_inputs_raise` | M<1, queue_capacity<1, floor_1_center 부재, 이중 호출 모두 `ValueError` |
+
+### 18.8 검증 통계
+
+- **tests/test_space.py**: 25 tests pass (10 STAGE 2.1 + 8 STAGE 2.2 + 7 STAGE 2.3)
+- **전체 suite**: **73 passed, 5 skipped** (이전 66 → +7)
+- skipped 5개는 STAGE 2.4 (elevator_physics) / STAGE 3 (agents, cost, locker)
+
+### 18.9 STAGE 2.3 완료 조건 체크
+
+- [x] `add_lobby_handoff_zones()` 가 6 zone + M compartment 추가
+- [x] M ∈ {2, 4, 8} sweep 호환
+- [x] 6 zone 모두 `floor_1_center` 와 walk 엣지로 연결
+- [x] H0 vestibule: `lobby_direct_corridor` ↔ EV1·EV2 직접 연결
+- [x] §17 robot idle pivot: `lobby_robot_pickup_zone → 3F office` 가 B1F 미경유, EV 1회만
+- [x] 7 new unit tests pass
+
+### 18.10 STAGE 2.4 진입 조건
+
+STAGE 2.4 는 `simulation/elevator_physics.py` 를 신설하여 `ElevatorKinematics` dataclass 와 `travel_time_sec()` 물리 모델 구현 (framework §5.3, plan §7 검증 수치).
+
+**검증 시나리오**:
+- 동층 (dH=0): 0s + door 4s = 4s
+- 1F→2F (dH=3.6m): √(2·3.6/1.0) = 2.68s + 4s = **6.68 s**
+- 1F→5F (dH=14.4m): 2·(2.5/1.0) + (14.4 − 6.25)/2.5 = 8.26s + 4s = **12.26 s**
+- B1F→5F (dH=21.6m): 11.14 + 4 = **15.14 s**
+- 대칭성: `travel_time(1, 5) == travel_time(5, 1)`
+- 기존 `tests/test_elevator_physics.py` skip stub 1개를 실제 테스트 ≥5개로 교체
