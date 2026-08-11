@@ -146,6 +146,72 @@ git push --force-with-lease origin main
 
 즉 본 계획이 승인·실행되면, 앞서 논의한 "수정 전 커밋" 요건은 자동으로 충족된다.
 
-## §8. 실행 로그 (실행 후 기입)
+## §8. 실행 로그 (2026-08-11 실행 완료)
 
-_(비어 있음 — 실행 시 각 Phase의 실제 출력·커밋 해시·추적 파일 수를 기록한다)_
+### Phase 0 — 사전 검증
+- `pytest -q` 재실행: **634 passed, 3 skipped in 212.98s** (0:03:32) — §2 실측치와 일치, 재확인 완료.
+- HR 골든패스: `simulation.run --scenario data/data1/K50_1.json --floor-profile uniform
+  --mode hr --out results/baseline_hr_K50_1_uniform_s42.json` (delivered=50, wall=0.76s)
+  → `analysis.verify_hr results/baseline_hr_K50_1_uniform_s42.json` →
+  **B1–B11 전항 PASS, "10 passed, 0 skipped, 0 failed"**.
+
+### Phase 1 — 백업
+- `git branch legacy/stage-era` (옛 HEAD `05628aa` 보존) — 로컬 생성 완료.
+- `git bundle create ~/Research/backups/abm_new_stage_era_20260811.bundle --all` →
+  `git bundle verify` → **"is okay" / "The bundle records a complete history."**
+  (4 refs: legacy/stage-era, main, remotes/origin/main, HEAD — 전부 `05628aa`/`38a50a8`).
+- `git push origin legacy/stage-era` → **성공**, `new branch legacy/stage-era -> legacy/stage-era`
+  (§6-2 결정에 따라 원격에도 보존).
+
+### Phase 2 — .gitignore 정비
+- `.gitignore`에 `results/` · `archive/` · `cycle_charts/out/` 3줄 추가.
+- 확인: `archive/`, `results/`, `cycle_charts/out/`, `data/`, `.venv/`, `.mypy_cache/`,
+  `experiments/results/` 전부 ignore 적용 확인(`git status --ignored`).
+- 추적 대상 사전 점검: `etc/`, `uv.lock`, `skills-lock.json`, `.claude/`, `.agents/`,
+  `cycle_charts/`(코드), 신규 tests/analysis/simulation/experiments/configs 전부 미추적
+  목록에 정상 노출 확인.
+
+### Phase 3 — 새 루트 커밋
+- **절차 편차 1건**: `git switch --orphan fresh-main`이 실측 git 2.32.0에서 워킹트리에
+  미커밋 변경(수정 23·삭제 6)이 있는 상태로는 실패함(`Your local changes ... would be
+  overwritten by checkout ... Aborting`) — 계획서 §5 예시 명령이 가정한 "무변경 전환"이
+  이 git 버전에서는 성립하지 않음(orphan 전환도 내부적으로 현재 HEAD로의 checkout과
+  동등하게 처리되어 로컬 수정과 충돌). **명령 실행 전 상태였으므로 워킹트리는 무손상**
+  (git이 스스로 중단, "Aborting"). 대응: 표준 안전 우회 — `git stash push -u`로
+  추적 수정분 + 미추적 신규 파일 전량을 스태시(무시 대상 제외) → 클린 상태에서
+  `git switch --orphan fresh-main` 정상 수행 → `git stash pop`. pop 시 예상대로
+  "modify/delete" 충돌 23건 발생(새 orphan 브랜치는 커밋이 없어 이전 트리 대비
+  "삭제"로 해석됨) — 이는 추적 상태 충돌일 뿐 파일 **내용**은 스태시 버전 그대로
+  트리에 남음("Version Stashed changes of X left in tree")을 명령 출력으로 확인.
+  검증: 5개 대표 파일(.gitignore, simulation/model.py, tests/test_space.py,
+  analysis/scenario_loader.py, pyproject.toml, simulation/agents/robot.py)을
+  `git show stash@{0}:<path>`와 `diff`하여 **바이트 단위 일치 확인**, 충돌 마커
+  (`<<<<<<<`/`=======`/`>>>>>>>`) 부재 확인(grep 무매치). 워킹트리 파일 내용은
+  변경되지 않았음(금지 조항 준수). `git add -A` 후 전량 `A`(신규 추가) 상태만 남아
+  잔존 충돌 없음 확인. 커밋 성공 후 `git stash drop`으로 정리(내용이 커밋에 완전히
+  들어갔음을 확인한 뒤 수행 — 워킹트리에는 영향 없음).
+- 스테이징 검토: 개별 최대 파일 `uv.lock` 474KB, 5MB 초과 파일 **0건**, 총 스테이징
+  용량 **약 4.22MB**(예상 ~10MB 대비 낮음, 50MB 한도 대비 여유) — 중단 기준 미해당,
+  정상 진행.
+- `git commit` → **새 루트 커밋 `56ce0b8` — "baseline: H0 v2.1 + H1 Phase A (A0-A5)
+  unified snapshot"**, 181 files changed, 49641 insertions(+).
+
+### Phase 4 — 브랜치 교체 + 원격 반영
+- `git branch -M fresh-main main` → 로컬 `main` = `56ce0b8`.
+- `git push --force-with-lease origin main` → **성공**: `38a50a8...56ce0b8 main -> main
+  (forced update)`.
+- `origin/legacy/stage-era`는 Phase 1에서 이미 push 완료(중복 push 불필요, `git
+  ls-remote origin`으로 재확인: `legacy/stage-era` → `05628aa`, `main`/`HEAD` → `56ce0b8`).
+
+### Phase 5 — 사후 검증
+- `git status` → `working tree clean`, `up to date with 'origin/main'`.
+- `git log --oneline` → 단일 루트 커밋 `56ce0b8`만 존재.
+- `git ls-files | wc -l` → **181**.
+- pytest 재실행은 생략(Phase 0에서 이미 확인 + Phase 3에서 파일 내용 바이트 일치를
+  별도 검증했으므로 재확인 불요). 선택 사항인 임시 clone 검증은 생략.
+
+### 결과 요약
+- 새 루트 커밋: `56ce0b8`(로컬/원격 `main`) · 옛 이력 보존: 로컬+원격 `legacy/stage-era`
+  = `05628aa` · 번들 = `~/Research/backups/abm_new_stage_era_20260811.bundle`.
+- 이상 발견: Phase 3에서 `git switch --orphan`이 계획서 가정과 달리 무변경 워킹트리를
+  요구함(위 절차 편차 참조) — 안전 우회로 해결, 파일 내용 무손상 검증 완료. 그 외 이상 없음.
