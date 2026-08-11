@@ -113,14 +113,17 @@ def _delivery_span(model) -> tuple[float, float] | None:  # noqa: ANN001
 
 
 def _ops_span(model) -> tuple[float, float] | None:  # noqa: ANN001
-    """[min ORD_TIME, last carrier settled] clock-second bounds, or None."""
+    """[min ORD_TIME, last carrier settled] clock-second bounds, or None.
+
+    F9: literally the delivery window with the robot's homecoming folded into
+    its right edge — expressed by calling `_delivery_span` rather than by
+    re-collecting rider exits, so the two definitions cannot drift apart.
+    """
     first = getattr(model, "first_order_sec", None)
     if first is None:
         return None
-    ends = [
-        r["exited_at_sec"] for r in model.rider_records
-        if r.get("exited_at_sec") is not None
-    ]
+    dspan = _delivery_span(model)
+    ends = [dspan[1]] if dspan is not None else []
     ends += [
         lg["returned_at_sec"] for lg in model.robot_leg_records.values()
         if lg.get("returned_at_sec") is not None
@@ -191,6 +194,24 @@ def _tick_index(clock_start_sec: float, dt: float, t: float, n_ticks: int) -> in
     """
     j = int(round((t - clock_start_sec) / dt))
     return max(0, min(n_ticks, j))
+
+
+def _span_ticks(model, span: tuple[float, float] | None,  # noqa: ANN001
+                n_ticks: int) -> tuple[int, int, int]:
+    """`(i0, i1, i1 - i0)` tick bounds for a clock-second window.
+
+    F9: the four windows (order span, delivery, fixed, ops) all needed the same
+    three lines — convert both edges with `_tick_index`, subtract for the
+    length, and fall back to `(0, 0, 0)` when the window is undefined so a
+    downstream `if span_ticks > 0` guard reads the same in every case. One
+    helper means a change to the indexing convention cannot be applied to three
+    of the four by accident.
+    """
+    if span is None:
+        return 0, 0, 0
+    i0 = _tick_index(model.clock_start_sec, model.dt, span[0], n_ticks)
+    i1 = _tick_index(model.clock_start_sec, model.dt, span[1], n_ticks)
+    return i0, i1, i1 - i0
 
 
 def _robot_block(model, fspan_ticks: int, f0: int, f1: int,  # noqa: ANN001
@@ -336,45 +357,25 @@ def summarize(model) -> dict:  # noqa: ANN001
     records = model.rider_records
     customers = list(model.customer_by_ord_id.values())
 
-    # V-KPIWIN: order-span sub-window [min ORD_TIME, last delivery] and its tick
-    # index bounds within the full-window cumulative snapshots (see helpers).
-    span = _order_span(customers)
+    # The four measurement windows and their tick-index bounds within the
+    # full-window cumulative snapshots. Each window's *definition* lives in its
+    # own helper (with the note above it); `_span_ticks` applies the one shared
+    # indexing convention to all four (F9).
     n_ticks = model.tick_count
-    if span is not None:
-        j0 = _tick_index(model.clock_start_sec, model.dt, span[0], n_ticks)
-        j1 = _tick_index(model.clock_start_sec, model.dt, span[1], n_ticks)
-    else:
-        j0 = j1 = 0
-    span_ticks = j1 - j0
-
-    # R8-b delivery sub-window [min ORD_TIME, last rider exit] (see above)
+    # V-KPIWIN: order-span sub-window [min ORD_TIME, last delivery]
+    span = _order_span(customers)
+    j0, j1, span_ticks = _span_ticks(model, span, n_ticks)
+    # R8-b delivery sub-window [min ORD_TIME, last rider exit]
     dspan = _delivery_span(model)
-    if dspan is not None:
-        d0 = _tick_index(model.clock_start_sec, model.dt, dspan[0], n_ticks)
-        d1 = _tick_index(model.clock_start_sec, model.dt, dspan[1], n_ticks)
-    else:
-        d0 = d1 = 0
-    dspan_ticks = d1 - d0
-
-    # A3 layer ①: the mode-invariant fixed window (see _fixed_window).
+    d0, d1, dspan_ticks = _span_ticks(model, dspan, n_ticks)
+    # A3 layer ①: the mode-invariant fixed window
     fspan = _fixed_window(model)
-    if fspan is not None:
-        f0 = _tick_index(model.clock_start_sec, model.dt, fspan[0], n_ticks)
-        f1 = _tick_index(model.clock_start_sec, model.dt, fspan[1], n_ticks)
-    else:
-        f0 = f1 = 0
-    fspan_ticks = f1 - f0
-
-    # A5-b: the operating window (see _ops_span) — the denominator for fleet
-    # utilization, and the only one of the four that neither truncates the work
-    # nor pads the clock with a warm-up the system could not have used.
+    f0, f1, fspan_ticks = _span_ticks(model, fspan, n_ticks)
+    # A5-b: the operating window — the denominator for fleet utilization, and
+    # the only one of the four that neither truncates the work nor pads the
+    # clock with a warm-up the system could not have used.
     ospan = _ops_span(model)
-    if ospan is not None:
-        p0 = _tick_index(model.clock_start_sec, model.dt, ospan[0], n_ticks)
-        p1 = _tick_index(model.clock_start_sec, model.dt, ospan[1], n_ticks)
-    else:
-        p0 = p1 = 0
-    ospan_ticks = p1 - p0
+    p0, p1, ospan_ticks = _span_ticks(model, ospan, n_ticks)
 
     # --- Customer ----------------------------------------------------------
     t_e2e = [c.t_e2e_sec for c in customers if c.t_e2e_sec is not None]
