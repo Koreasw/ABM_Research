@@ -383,10 +383,24 @@ def summarize(model) -> dict:  # noqa: ANN001
     # A3 layer ②: `T_building_order` — how long the FOOD was inside the
     # building, from the courier walking in with it to the customer receiving
     # it. This is the quantity that means the same thing in every mode, and the
-    # one the paper compares: H0's `t_lobby` happens to equal it because the
-    # courier stays with the order to the door, but H1's `t_lobby` is only the
-    # courier's own dwell (arrival → handoff → exit) and diverges under
-    # saturation for a reason that has nothing to do with the customer.
+    # one the paper compares.
+    #
+    # ⚠️ F6 (Fable 5 리뷰 2026-08-11) — it is NOT the same interval as H0's
+    # `t_lobby`, which an earlier version of this comment claimed. Both start at
+    # `entered_at_sec`, but they END at different events:
+    #     T_building_order : `customer.delivered_at_sec` — stamped when the
+    #                        courier's SERVICE completes at the door
+    #     t_lobby          : `exited_at_sec` — the courier then rides/walks back
+    #                        down and leaves the building
+    # so in H0 `t_lobby` = T_building_order + the courier's descent and exit
+    # walk, a tail this module measures at 55~91 s (see the R8-b window note
+    # above). The two therefore differ by a real, non-zero amount even in H0.
+    # In H1 they are not even nested: `t_lobby` is only the courier's own dwell
+    # (arrival → handoff → exit) and diverges under saturation for a reason that
+    # has nothing to do with the customer.
+    # 📌 Paper use: `T_building_order` is the cross-mode quantity; quoting H0
+    # `t_lobby` as if it were the same number overstates H0's in-building time
+    # by that tail (§3 사용자 대기 결정, 인용본 ⓐ/ⓑ 선택이 여기 걸려 있다).
     # `t_order_post_handoff_sec` splits off the robot's half (handoff start →
     # delivery) and is None in H0, where no handoff exists.
     rec_by_ord = {r["ord_id"]: r for r in records}

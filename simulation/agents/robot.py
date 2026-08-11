@@ -256,9 +256,14 @@ class RobotAgent(Agent, GraphWalker):
         (A2), not here — one stream, one owner.
 
         The transition itself happens on the robot's **next** tick, not inside
-        this call. That one-tick lag is a real consequence of the tick order
-        (the rider steps before the robot), so it is left visible and is carried
-        into the A4 golden-path hand calculation rather than papered over.
+        this call. That one-tick lag is a real consequence of the tick order:
+        `model.step` steps the ROBOTS BEFORE THE RIDERS, so by the time the
+        rider calls this the robot has already taken its turn this tick and only
+        sees `_rider_ready` on the next one. (F7 — this docstring used to say
+        the opposite, "the rider steps before the robot"; reversing the real
+        order fails 5 A4 golden-path cases, and `verify_hr` B2 asserts the lag
+        is exactly one tick for that reason.) The lag is left visible and
+        carried into the A4 hand calculation rather than papered over.
         """
         if self.state is not RobotState.WAIT_RIDER:
             raise ValueError(
