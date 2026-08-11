@@ -1,0 +1,23 @@
+# Sensitivity sweeps (framework §7.7).
+morris:
+  n_trajectories: 10
+  parameters:
+    # w_R sweep removed (V-CFG 2026-07-10): w_R is data-derived per type
+    # (RIDERS fixed_cost + var_cost*throughput, rider_arrival_model.py) — a
+    # config-key sweep can never take effect. Sweep throughput_per_rider_h instead.
+    - { name: locker_n_compartments, bounds: [2, 16] }
+    - { name: locker_v_max,         bounds: [50, 200] }
+    - { name: dock_mean_sec,        bounds: [10.0, 40.0] }
+    # tau_patience_sec sweep removed (V-CFG 2026-07-10): rider patience is not
+    # modeled and the config key was dead; re-add together with the H2 queue model.
+    - { name: n_robots,             bounds: [1, 10] }
+    - { name: K,                    bounds: [50, 1000] }
+    - { name: alpha_lobby_extra,    bounds: [0.0, 0.3] }
+    - { name: discount_rate,        bounds: [0.02, 0.10] }
+    - { name: social_acceptance_alpha, bounds: [0.0, 0.3] }
+    - { name: locker_install_capex_krw, bounds: [4000000, 16000000] }
+    - { name: sigma_eps,            bounds: [0.0, 0.30] }
+
+sobol:
+  n_samples: 1024
+  top_k_from_morris: 6

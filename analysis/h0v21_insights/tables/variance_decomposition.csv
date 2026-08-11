@@ -1,0 +1,10 @@
+kpi,column,share_between_K,share_within_K_scenario,share_seed
+T_e2e mean,kpi.customer.t_e2e_mean_sec,0.0561,0.9435,0.0004
+T_e2e p95,kpi.customer.t_e2e_p95_sec,0.0542,0.9313,0.0145
+T_lobby mean,kpi.rider.t_lobby_mean_sec,0.8595,0.0782,0.0623
+W_EV riders,kpi.building.w_ev_mean_riders_sec,0.9111,0.0406,0.0483
+W_EV pedestrians,kpi.pedestrian.ev_wait_mean_sec,0.9119,0.0109,0.0772
+Shared-EV denial exposure,drv_shared_pax_ge12_frac_any,0.0627,0.2689,0.6684
+Stairs share,drv_stairs_share,0.1635,0.0,0.8365
+Door arrival c_a^2,drv_arrival_ia_cv2,0.3058,0.6936,0.0007
+"Riders in building, max",drv_riders_in_building_max,0.8873,0.105,0.0078

@@ -1,0 +1,147 @@
+# FROZEN REGRESSION PATH — pre-§1.6 geometry (no basement).
+#
+# Identical to configs/baseline_10f.yaml except building.n_basements = 0 and no
+# pedestrian.ground_split, i.e. the building exactly as it stood before the
+# people-only basements B1/B2 were added (etc/plan_h0_revision.md §1.6, 사용자
+# 확정 2026-08-03 3차).
+#
+# Purpose: tests/test_h0_frozen_snapshot.py replays this config against the
+# snapshots in results/pre_basement/ and requires them to be bit-identical. That
+# is what proves §1.6 changed the building rather than the *model* — the floor
+# rank refactor it required touches elevator dispatch, wait estimation and the
+# KPI position series, all of which are shared with every above-ground path.
+#
+# Do not "update" this file to track baseline_10f.yaml: any real change here
+# would have to be justified against those frozen snapshots. It is a regression
+# path, not a second baseline. Not used by the paper track.
+building:
+  n_floors: 10
+  n_basements: 0
+  floor_height_m: 4.0
+  corridor_length_m: 34.0
+  n_offices_per_floor: 12
+  office_positions_m:
+  - 2
+  - 7
+  - 12
+  - 22
+  - 27
+  - 32
+  - 2
+  - 7
+  - 12
+  - 22
+  - 27
+  - 32
+  office_sides:
+  - north
+  - north
+  - north
+  - north
+  - north
+  - north
+  - south
+  - south
+  - south
+  - south
+  - south
+  - south
+  ev_corridor_positions_m:
+  - 16
+  - 16
+  - 18
+  - 18
+  ev_sides:
+  - north
+  - south
+  - north
+  - south
+  shared_ev_ids:
+  - EV3
+  - EV4
+  occupancy_per_floor: 100
+  shared_ev_capacity_people_no_robot: 15
+  shared_ev_capacity_people_with_robot: 11
+elevator:
+  accel_mps2: 1.0
+  max_speed_mps: 2.5
+  door_open_close_sec: 4.0
+  social_acceptance_alpha: 0.1
+  alpha_lobby_extra: 0.1
+vertical:
+  ev_wait_sec: 20.0
+  stair_sec_per_floor: 16.5
+  mode_choice_beta_per_sec: 0.15
+  mode_seed: 42
+  walk_speed_mps: 1.2
+demand:
+  default_profile: uniform
+  floor_profiles:
+    uniform:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    bottom_heavy:
+    - 0.2
+    - 0.2
+    - 0.2
+    - 0.1
+    - 0.1
+    - 0.1
+    - 0.033
+    - 0.033
+    - 0.033
+    top_heavy:
+    - 0.033
+    - 0.033
+    - 0.033
+    - 0.1
+    - 0.1
+    - 0.1
+    - 0.2
+    - 0.2
+    - 0.2
+robot:
+  n_robots: 3
+  capa: 100
+  soc_low_threshold: 20.0
+  speed_mps: 1.0
+  service_time_pickup_sec_h1: 60.0
+  service_time_pickup_sec_h3: 15.0
+  service_time_drop_sec: 30.0
+locker:
+  n_compartments: 8
+  v_max: 100
+  storage_limit_sec: 1800.0
+  dock_mean_sec: 20.0
+  dock_sd_sec: 5.0
+  pickup_mean_sec: 15.0
+  pickup_sd_sec: 4.0
+rider_process:
+  walk_speed_mps: 1.2
+  service_time_sec: 120.0
+  sigma_eps: 0.0
+  descend_same_mode: true
+pedestrian:
+  arrival_rate_per_min: 7.5
+  down_fraction: 0.5
+  speed_mps: 1.2
+  elevator_only: true
+  window_margin_sec: 3600.0
+customer:
+  tau_abandon_sec_default: 2280.0
+simulation:
+  rng_seed: 42
+  lunch_peak_start_sec: 41400.0
+  horizon_sec: 3600.0
+  tick_sec: 1.0
+  max_overrun_sec: 3600.0
+npv:
+  horizon_years: 5
+  discount_rate: 0.05

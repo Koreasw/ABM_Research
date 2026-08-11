@@ -1,0 +1,10 @@
+# ⚠️ 미사용 파일 — 어떤 코드도 이 디렉터리를 읽지 않는다 (A0에서 확인:
+#    grep -rn 'configs/modes' --include=*.py -> 0 hit).
+#    값의 정본은 configs/baseline_10f.yaml의 robot: / handoff: 블록이다
+#    (점검 결정 12, 2026-08-06). 특히 설계 동결 R0-3의 N(60, 15^2)는
+#    여기 있었으나 로드되지 않았고, 이제 handoff.service_{mean,sd}_sec이다.
+#    이력 보존을 위해 남겨 두며, 값을 고쳐도 시뮬레이션은 바뀌지 않는다.
+mode: h1_sync
+# Rider meets robot at handoff_counter (synchronous).
+handoff_service_mean_sec: 60.0
+handoff_service_sd_sec: 15.0

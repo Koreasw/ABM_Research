@@ -1,0 +1,191 @@
+# H0 v2 10-story profile (etc/plan_h0_revision.md §1, 사용자 확정 2026-08-03).
+# ~40 m tall (4.0 m x 10F), ~1,200 m2/floor (~34.6 m footprint), 34 m
+# double-loaded corridor, 12 offices/floor (~85 m2/office), 100 residents/floor,
+# 4 x 15-person EVs cross-placed at the corridor center (north EV1+EV3 /
+# south EV2+EV4; EV3·EV4 reserved as robot-shareable). The robot waits AND
+# charges opportunistically at the 1F lobby robot zone (plan §1.3) and never
+# uses a basement. B1/B2 are people-only boarding levels (plan §1.6).
+building:
+  n_floors: 10
+  # People-only basement levels B1/B2 (plan §1.6, 사용자 확정 2026-08-03 3차):
+  # no offices, no corridor -- occupants ride the EVs down to parking, which is
+  # what loads the cars. Robot facilities stay at 1F. 0 disables them entirely
+  # and reproduces the pre-§1.6 building bit-for-bit.
+  n_basements: 2
+  floor_height_m: 4.0            # 40 m total (4.0 m x 10F)
+  corridor_length_m: 34.0        # double-loaded; ~34.6 m footprint (~1,200 m2)
+  n_offices_per_floor: 12        # 6 north + 6 south (~85 m2/office)
+  # Office branch positions along the 34 m corridor (0..34), north then south.
+  # North and south share the same 6 positions so each pair of offices faces
+  # directly across the corridor (mirror symmetry), rather than staggering.
+  #
+  # Layout (사용자 확정 2026-08-04): three offices per side per half, 5 m apart,
+  # mirrored about the corridor MIDPOINT 17.0 m — 2+32 = 7+27 = 12+22 = 34. The
+  # 10 m gap between 12 and 22 is the service core: the EV bank sits at 16/18,
+  # so an office branch there would put a shaft inside a tenant space. The
+  # previous [4, 9, 14, 19, 24, 29] was mirrored about 16.5 m (not the midpoint)
+  # and put offices 2 m and 1 m from the EV doors.
+  #
+  # Positions are METRES and must land on the building.corridor_resolution_m
+  # grid (1 m); `space.build_building_graph` rejects off-grid values at build
+  # time. A half-metre layout needs the resolution lowered first.
+  office_positions_m: [2, 7, 12, 22, 27, 32, 2, 7, 12, 22, 27, 32]
+  office_sides:
+    [north, north, north, north, north, north,
+     south, south, south, south, south, south]
+  # 4 EVs cross-placed at the corridor center (사용자 확정 §8-2): list order
+  # defines EV1..EV4. North bank = EV1 (people-only) + EV3 (shareable),
+  # south bank = EV2 (people-only) + EV4 (shareable). No (position, side)
+  # overlap with offices ([4..29] vs 16/18).
+  ev_corridor_positions_m: [16, 16, 18, 18]
+  ev_sides: [north, south, north, south]
+  # Robot-shareable EVs, declarative (plan §1.2): H0 has no robots so all 4
+  # EVs serve people identically; robot phases (H1~H3) restrict robot paths
+  # to these cars. Change this list to re-designate shared cars.
+  shared_ev_ids: [EV3, EV4]
+  occupancy_per_floor: 100       # background-traffic / order-rate input;
+                                 # 9 office floors (2..10F) x 100 = 900 residents
+                                 # (~1,000 counting ground-floor staff)
+  shared_ev_capacity_people_no_robot: 15   # 15-person car
+  shared_ev_capacity_people_with_robot: 11 # robot occupies ~4 person-slots
+
+elevator:
+  accel_mps2: 1.0
+  max_speed_mps: 2.5
+  door_open_close_sec: 4.0
+  social_acceptance_alpha: 0.1
+  alpha_lobby_extra: 0.1
+
+vertical:                          # T2 (archive/h0_v1/docs/plan_travel_time_functions.md §6)
+  ev_wait_sec: 20.0                # 평균 EV 대기 (STAGE 3 내생화 전 상수 근사)
+  stair_sec_per_floor: 16.5        # 층고 4.0 m ÷ 수직상승 ~0.24 m/s (Fruin)
+  mode_choice_beta_per_sec: 0.15   # 이항 로짓 민감도
+  mode_seed: 42                    # 수단 샘플링 시드 (XOR ord_id)
+  walk_speed_mps: 1.2              # 입구·층내 보행속도
+
+demand:                            # etc/demand_mapping.md 단계 2·3 — 층 수요 프로파일 (2D 데이터 완전 독립)
+  default_profile: uniform
+  floor_profiles:                  # floors 2..10 (9 entries, 비음수 가중치; 로드 시 정규화)
+    uniform:      [1, 1, 1, 1, 1, 1, 1, 1, 1]
+    bottom_heavy: [0.20, 0.20, 0.20, 0.10, 0.10, 0.10, 0.033, 0.033, 0.033]  # 합 0.999 -> 정규화
+    top_heavy:    [0.033, 0.033, 0.033, 0.10, 0.10, 0.10, 0.20, 0.20, 0.20]
+
+# Robot fleet (Phase A / H1~H3). H0 builds no robots, so this whole block is
+# inert on the paper track — tests/test_a0_config_wiring.py pins that by mutating
+# it and asserting the H0 result stays bit-identical.
+robot:
+  n_robots: 5                    # baseline (사용자 확정 2026-08-06, 점검 결정 1).
+                                 # 구 3대는 v1 설계 동결값. Phase D sizing 스윕 {5,7,9}.
+  capa: 100                      # = 코퍼스 28개 5,200주문의 max VOL. 단건 배송(R0-4)
+                                 # 이라 적재 거부는 정의상 0건 — B-게이트에서는 정보행.
+                                 # ⚠️ VOL은 부피이지 무게가 아니며(data_ex.txt Order.volume),
+                                 # 100에서 절단된 것으로 보인다(정확히 100이 26건, 초과 0건).
+  speed_mps: 1.0                 # 사람 1.2 m/s 대비 0.833배
+  service_time_drop_sec: 30.0    # 사무실 문 앞 인도
+  service_time_pickup_sec_h3: 15.0   # H3 락커 수거 (Phase C)
+  # 배터리·충전 (결정 #26, 사용자 확정 2026-08-06). 설계 동결 R0-5 "충전 비활성"과
+  # 결정 #19 "충전 사이클 미모델링"을 폐기한다 — 논문 §8 한계 절의 "충전 제외"도 함께 삭제.
+  # 점심 피크 창에서 soc_low_pct는 발화하지 않는 것이 정상이다(종료 SOC 43~90%).
+  # 발화 경로는 ①합성 단위 테스트 ②Phase E의 soc_init_pct 스윕뿐이다.
+  battery:
+    capacity_wh: 1300.0
+    wh_per_m: 0.14               # 주행 소모
+    wh_per_min_idle: 1.0         # 비주행 전량(대기·EV대기·탑승·인계·인도).
+                                 # 긴 드레인에서 총소모의 ~55%를 차지하므로 Phase E 감도 대상.
+    charge_wh_per_min: 13.0      # 20→80% 1시간 = 780 Wh/h (CC 구간이라 선형 근사 가능)
+    soc_low_pct: 20.0            # 하향 돌파 → 인도(DROP) 완료 후 복귀·충전
+    soc_resume_pct: 40.0         # 여기까지 충전 후 배차 재개 (20→40% = 정확히 20분)
+    soc_init_pct: 100.0          # Phase E 스윕 {100, 60, 40, 25}
+
+# 1F 로비 인계 (설계 동결 R0-3). 구 configs/modes/h1_sync.yaml은 어떤 코드도
+# 읽지 않았다 — 값의 정본은 여기다.
+handoff:
+  service_mean_sec: 60.0
+  service_sd_sec: 15.0           # N(60, 15^2) 0-절단
+  rng_stream_tag: 0x686F6666     # 'hoff' — P3 스트림-패밀리의 4번째 3-워드 패밀리
+
+locker:
+  n_compartments: 8
+  v_max: 100
+  storage_limit_sec: 1800.0
+  dock_mean_sec: 20.0
+  dock_sd_sec: 5.0
+  pickup_mean_sec: 15.0
+  pickup_sd_sec: 4.0
+
+rider_process:                     # H0 ABM in-building process (plan_abm_baseline_h0.md)
+  walk_speed_mps: 1.2              # framework 1.5 override — unified with travel-time layer
+  service_time_sec: 120.0          # fallback only; RIDERS.service_time (per type) wins
+  sigma_eps: 0.0                   # deterministic arrivals this stage (sweep candidate, sensitivity.yaml)
+  descend_same_mode: true          # reuse the ascent's sampled mode for descent
+
+pedestrian:
+  arrival_rate_per_min: 7.5        # lunch-peak constant Poisson (900 res x ~0.5 trip/h,
+                                   # v2 스케일링: 사용자 확정 §8-5)
+  down_fraction: 0.5               # floor->1F : 1F->floor split
+  speed_mps: 1.2
+  elevator_only: true              # congestion generators — all take the EV
+  window_margin_sec: 3600.0        # scenario_window mode: ped stream spans
+                                   # [min ORD_TIME - margin, max ORD_TIME + margin]
+  # Ground-side endpoint of a pedestrian trip (plan §1.6, 사용자 확정): a trip
+  # is office floor <-> one of these, drawn per pedestrian. This is a
+  # REDISTRIBUTION of arrival_rate_per_min, not an addition -- the 7.5/min is
+  # calibrated to 900 residents x 0.5 trip/h (§1.1), so head count is unchanged
+  # and the EV effect comes purely from longer rides and more stops. Keys are
+  # floor labels ("1" = lobby, "-1" = B1, "-2" = B2); weights are normalised.
+  ground_split:
+    "1": 0.50
+    "-1": 0.30
+    "-2": 0.20
+
+customer:
+  tau_abandon_sec_default: 2280.0
+
+simulation:
+  rng_seed: 42
+  lunch_peak_start_sec: 41400.0   # 11:30
+  horizon_sec: 3600.0             # 1 h lunch peak (order/pedestrian generation window)
+  tick_sec: 1.0
+  # R8 window/termination policy (etc/plan_h0v21_window.md §2). `delivery`:
+  #   * the clock starts warmup_sec before the FIRST order (not a margin
+  #     borrowed from the pedestrian block),
+  #   * background pedestrians spawn until the run ends -- no cutoff, because
+  #     clipping the tail biases the late orders (plan §1.2, W_EV -28%),
+  #   * the run ends when every order is delivered AND every rider has left the
+  #     building, instead of waiting for the background to drain.
+  # Omitting the key selects `legacy_margin`, which reproduces the pre-R8 model
+  # bit-for-bit -- that is how configs/regression_nobasement_10f.yaml keeps the
+  # frozen pre-basement replay valid (HANDOFF_v2 §3.6).
+  window_policy: delivery
+  # Measured background saturation is 300~600 s (plan §1.1); gated by verify_h0
+  # A13, which also checks the building was ACTUALLY warm at the first order.
+  warmup_sec: 600.0
+  # Safety cap only. Under `delivery` it is measured from the LAST order, and
+  # the last rider exits 2,346~3,496 s after that (cook + street + in-building),
+  # so 3600 would leave K300_4 just 104 s of headroom (plan §10-1).
+  max_overrun_sec: 7200
+  # 로봇 모드(H1~H3) 전용 안전 cap (점검 결정 11). 로봇 함대가 서버가 되면서
+  # 드레인이 훨씬 길어진다 — K300·5대·공용2대에서 완주 ~4.9 h(17,472 s), 수직 상한이
+  # 지배하는 비관 케이스에서 ~7.5 h(27,000 s). 잠정값(비관값 ×1.38)이며 A7에서
+  # K300_4를 43,200 s cap으로 1 run 돌려 실측한 뒤 ×1.3으로 확정한다(R8-d 관례).
+  # ⚠️ 위 max_overrun_sec(7200)은 절대 건드리지 않는다 — H0 v2.1 검증 배터리 전체의
+  # 전제이고, ped_decay가 H0에 도달하지 못한다는 보장도 그 값에 걸려 있다.
+  max_overrun_sec_robot: 32400
+  # 점심 피크 이후 배경 보행자 감쇠 (점검 결정 10). 이 블록이 없으면 로봇 모드의
+  # 긴 드레인 내내 피크율 7.5/분이 유지돼 ①비현실적이고(상주 1인 하루 30회 이동)
+  # ②H0 K300(~960명)과 H1 K300(~3,375명)의 배경이 달라져 모드 비교가 깨진다.
+  #
+  # H0 무교란의 근거 2가지(각각 단독으로 충분):
+  #   1. start = 마지막 주문 + 7200 = H0의 cap 시각과 정확히 같고, 판정이 strict
+  #      (t > start)라 H0는 감쇠 구간에 진입할 수 없다.
+  #   2. 감쇠는 Poisson rate의 *값*만 바꾼다 — ped_rng.poisson() 호출은 rate와
+  #      무관하게 매 틱 정확히 1회이므로 RNG 호출 패턴이 불변이다.
+  # 블록을 지우면 감쇠가 완전히 비활성화된다(구 동작 그대로).
+  ped_decay:
+    start_after_last_order_sec: 7200.0
+    ramp_sec: 1800.0
+    floor_rate_per_min: 2.0      # 피크의 27%. 캘리브레이션 근거 없음 → Phase E 감도 대상..0
+
+npv:
+  horizon_years: 5
+  discount_rate: 0.05
