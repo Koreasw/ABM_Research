@@ -25,7 +25,9 @@
      **포화는 결함이 아니라 결과**이며, 게이트가 아니라 지표로 표현한다.
   3. **Phase 실행 순서가 `A → B → D1 → C → D2 → E → F`로 바뀌었다**(결정 #30).
 
-**다음에 할 일 = Step A7** (§4). A5 게이트 리뷰는 **2026-08-11 실행·반영 완료**(§A5-c).
+**다음에 할 일 = Step A7-b**(전수 배터리, §4). **A7-a 게이트 보강은 2026-08-11 완료** —
+`analysis/verify_hr.py`가 **B1~B18(17 게이트)**이고, 4티어 전건 17/17 PASS다(구현 로그 §A7-a).
+A5 게이트 리뷰는 **2026-08-11 실행·반영 완료**(§A5-c).
 A6 단조성 5방향·극한 2케이스도 **2026-08-11 완료** — 4/5방향 PASS·1방향(④) TIE,
 방향 ②·③은 각 1건씩 FAIL이나 원인 분석 완료(코드 미수정, 상세는 구현 로그 §A6).
 
@@ -123,6 +125,11 @@ A6 단조성 5방향·극한 2케이스도 **2026-08-11 완료** — 4/5방향 P
 
 계획서 4종 개정(`phase_A_robot_h1` · `plan_hr_extension` · `phase_D_experiments_economics` ·
 `research_plan_scie`) + 신설 2종(구현 로그 · H1 체크리스트).
+
+**2026-08-11 추가**: `etc/scie_phase/design_a7a_gates.md`(**A7-a 게이트 보강 설계 정본** —
+B18 동결 수치 기입 완료) · `etc/scie_phase/plan_b15_3_h1_upstream_replay.md`(B15-3 이연
+계획 정본) · `etc/scie_phase/review_fable5_kpi_robot.md`(F1~F9 리뷰). 구현 로그에
+**§A7-a** 추가.
 
 ---
 
@@ -320,9 +327,10 @@ EV(18 m)→사무실 = **1 m(EV 지선) + |18 − pos| + 3 m(사무실 지선)**
 > (`_assert_only_failure`가 "only"를 안 봤고, 크래시 단언이 항진명제였다).
 > **전부 수정·회귀 고정 완료. 상세는 구현 로그 §A5-c.**
 >
-> ⚠️ **A7 착수 시 우선 처리**: 리뷰가 H0 A-게이트 대비 **누락 8건**을 실측으로 보고했다.
-> 특히 **주문 결과(`t_e2e`·SLA)와 워밍업 적정성이 무게이트**다 — `t_e2e = 1.0 s`로
-> 바꿔도, `warmup` 블록을 삭제해도 전건 PASS다. 구현 로그 §A5-c-④ 표가 정본.
+> ✅ **A7-a에서 해소(2026-08-11)**: 리뷰가 보고한 **누락 8건** 중 게이트 대상 5건이
+> B12~B18로 신설됐다 — `t_e2e = 1.0 s`도 `warmup` 블록 삭제도 이제 FAIL이다. 잔여는
+> Phase B 3건(`_guard` 공용화 · 이름 이중화 · 실구동 테스트)과 **B15-3 이연 1건**
+> (`rider_type` 변조 = 수용된 위험). 구현 로그 **§A7-a**가 정본.
 
 **A6·A7이 반드시 알아야 할 것 4가지**:
 - ⚠️ **A6 단조성 ②의 함대 부하는 `utilization_ops`로 판정할 것**(A5-b, 사용자 지적).
@@ -361,12 +369,28 @@ EV(18 m)→사무실 = **1 m(EV 지선) + |18 − pos| + 3 m(사무실 지선)**
 ×10 K50_1) 모두 프로덕션 기본 cap 안에서 완주, `verify_hr` 10/10 PASS. ②·③의 FAIL은
 코드·게이트를 고쳐 지우지 않았다 — 원인 분석은 구현 로그 **§A6**이 정본.
 
-### Step A7 — `max_overrun` 실측 확정 + 전수 배터리 (소넷 / medium, ~1일)
+### Step A7-a — 게이트 보강 B12~B18 ✅ **완료 2026-08-11**
+
+`analysis/verify_hr.py` 10 → **17 게이트**(B1~B5·B7~B18). B12 주문 결과 재계산 ·
+B13 워밍업 적정성(블록 부재 = FAIL) · B14 EV 카별 보존+선언 정합 · B15 상류 체인 ·
+B16 leg floor 범위 · B17 종료 상태 정합 · B18 `board_denied` 상한(10-seed mean+4σ로
+**동결**: K50 28 / K100 66 / K200 126 / K300 151). 음성 회귀 **20건** 신설,
+스위트 646 → **666 passed / 3 skipped**. 4티어 **17/17 PASS**.
+설계 정본 = `etc/scie_phase/design_a7a_gates.md`, 구현 상세 = 구현 로그 **§A7-a**.
+
+- **B15-3(상류 풀 배정 리플레이)은 이연**(사용자 결정) — `rider_type` 변조는 여전히
+  무게이트이며 **수용된 위험**이다. 계획 정본 `etc/scie_phase/plan_b15_3_h1_upstream_replay.md`.
+- **캡 종료 런은 인용 불가**: B11이 이미 FAIL하며(실측 4건), 메시지가
+  `utilization_ops`·`drain_*` 인용 불가 사유를 명시한다(B17-2). ops 창 정의는 불변.
+
+### Step A7-b — `max_overrun` 실측 확정 + 전수 배터리 (소넷 / medium, ~1일)
 
 **선행**: K300_4를 **43,200 s cap**으로 1 run 돌려 드레인 실측 → **×1.3**으로
 `max_overrun_sec_robot` 확정(현 32,400은 추정치). R8-d의 `RUSH_OVERRUN_SEC` 관례.
-그 뒤 28×3 = **84 run** 전수 B1~B11 PASS. 관측 3항목(deny의 K 의존 · 로봇 공용 EV
+그 뒤 28×3 = **84 run** 전수 **B1~B18** PASS. 관측 3항목(deny의 K 의존 · 로봇 공용 EV
 직렬화 · 저층 배달 부호) + **병목 이전 지점**(§3.6).
+⚠️ **B18 상한은 티어당 시나리오 1개로 캘리브레이션됐다** — 다른 파일이 FAIL하면 상한을
+넓히지 말고 티어별 전 파일로 재캘리브레이션할 것(구현 로그 §A7-a-⑤).
 
 ---
 
@@ -412,13 +436,13 @@ datacollector 데이터프레임 8회 재생성 162ms)인데 `play_interval=300`
 
 ```bash
 cd /home/sw/Research/abm_new
-.venv/bin/python -m pytest -q                 # 646 passed / 3 skipped
+.venv/bin/python -m pytest -q                 # 666 passed / 3 skipped
 .venv/bin/python -m pytest tests/test_a0_config_wiring.py tests/test_a0_ped_decay.py -q   # 39
 .venv/bin/python -m pytest tests/test_a1_robot.py -q                                       # 23
 .venv/bin/python -m pytest tests/test_a2_handoff.py -q                                     # 26
 .venv/bin/python -m pytest tests/test_a3_kpi.py tests/test_a3_visual.py -q                 # 35
 .venv/bin/python -m pytest tests/test_vv_golden_path_hr.py -q                              # 7
-.venv/bin/python -m pytest tests/test_verify_hr.py -q                                      # 59
+.venv/bin/python -m pytest tests/test_verify_hr.py -q                                      # 79
 .venv/bin/python -m pytest tests/test_vv_extreme_hr.py -q                                  # 2 (A6 극한)
 ```
 
@@ -444,7 +468,7 @@ cd /home/sw/Research/abm_new
 **스위트 수 이력**: v2.1 서명 시점 437 → A0 착수 시점 **441**(계획서의 "440"은 표류값)
 → A0 후 **480** → A1 후 **503** → A2 후 **530** → A3 후 **565** → A4 후 **572**
 → A5 후 **614** → A5-b 후 **619** → A5-c 후 **634** → Fable F1~F9 리뷰 반영 후 **644**
-→ A6 후 **646**(`tests/test_vv_extreme_hr.py` 2건 신설; 단조성 5방향은 pytest 래퍼가
+→ A6 후 **646** → A7-a 후 **666**(B12~B18 음성 회귀 20건; `tests/test_vv_extreme_hr.py` 2건 신설은 A6; 단조성 5방향은 pytest 래퍼가
 없다 — H0의 `vv_monotonicity.py`와 동일 관행, `experiments/vv_monotonicity_hr.py`로
 별도 재실행).
 
