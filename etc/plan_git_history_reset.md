@@ -215,3 +215,27 @@ git push --force-with-lease origin main
   = `05628aa` · 번들 = `~/Research/backups/abm_new_stage_era_20260811.bundle`.
 - 이상 발견: Phase 3에서 `git switch --orphan`이 계획서 가정과 달리 무변경 워킹트리를
   요구함(위 절차 편차 참조) — 안전 우회로 해결, 파일 내용 무손상 검증 완료. 그 외 이상 없음.
+
+## §9. 정오(corrigendum) — 무수정 추적 파일 40개 소실 및 복구 (2026-08-11)
+
+**§8의 "무손상" 판정은 불완전했다.** 리뷰 9건 수정 작업(후속 세션)이 착수 시점 스위트가
+634가 아닌 **597 passed / 0 skipped**임을 보고하면서 발견됐다.
+
+- **기전**: `git stash push -u`는 *수정된 추적 파일 + 미추적 파일*만 담는다. **수정되지 않은
+  추적 파일 약 40개는 stash에 들어가지 않았고**, 직후의 `git switch --orphan`이 추적 파일
+  전부를 워킹트리에서 제거하면서 그대로 소실됐다. stash pop은 이들을 복원할 수 없었다
+  (애초에 stash에 없었으므로).
+- **§8 검증이 놓친 이유**: Phase 3의 바이트 일치 검증은 표본 5개가 전부 *stash에 있던*
+  파일이었다. Phase 5의 pytest 재실행 생략(총괄 세션 지시)이 마지막 검출 기회를 제거했다 —
+  재실행했다면 634→597 불일치가 그 자리에서 드러났을 것이다.
+- **소실 목록**: 테스트 6개(tests/__init__.py, test_cost_model, test_demand_model,
+  test_load_data, test_locker, test_rider_arrival_model = 사라진 37 tests + 3 skips),
+  simulation/{__init__,costs}.py, agents/{__init__,locker}.py, analysis 15개(demand_model,
+  run_analysis, fit_report, fitted_params, figures 10), experiments 9개 전부, README.md,
+  .python-version, .gitkeep 4개 — 총 40개.
+- **복구**: 전부 *무수정* 추적 파일이었으므로 `legacy/stage-era`의 버전이 곧 소실 시점의
+  정본이다. `git checkout legacy/stage-era -- <40개>`로 복구, 의도적 삭제 6건은 제외 유지.
+  복구 후 전체 스위트로 검증(아래 복구 커밋 참조).
+- **교훈**: orphan 전환류 작업의 무손상 검증은 표본 diff가 아니라 **전수 기준
+  (`git ls-tree` 파일 목록 비교 + 전체 스위트 재실행)**으로 해야 한다. stash 우회를 쓸 경우
+  "stash에 안 들어가는 것이 무엇인가"를 먼저 열거할 것.
