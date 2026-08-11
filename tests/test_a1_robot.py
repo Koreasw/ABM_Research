@@ -324,6 +324,38 @@ def test_assigning_a_basement_delivery_is_refused(model) -> None:
         RobotAgent(model).assign(basement_order)
 
 
+def test_assigning_a_first_floor_delivery_is_refused(model) -> None:
+    """F1 — the dispatch guard must agree with the FSM, which has no 1F path.
+
+    Before the fix the guard was `floor < 1`, so a 1F order was accepted and
+    then hung: `_register_call` computes `direction = -1` for a same-floor
+    "up" leg, the robot rides 1F→1F, alights straight into TO_HOME and calls
+    `_finish_trip` — `trips_completed` increments while `delivered_at_sec`
+    stays None, so a full run can never satisfy `_delivery_complete()` and
+    burns to the `max_overrun` cap. The assertions below re-run that chain to
+    show it is still broken, which is exactly why the order must be refused.
+    """
+    first_floor_order = dataclasses.replace(model.orders[0], floor=1)
+    with pytest.raises(ValueError, match="same-floor"):
+        RobotAgent(model).assign(first_floor_order)
+
+    # the FSM half of the claim, driven past the guard by hand: the "up" leg of
+    # a same-floor delivery registers a DOWN hall call, which is the step that
+    # sends the robot home instead of to the customer
+    r = RobotAgent(model)
+    r.order = first_floor_order
+    r._depart_for_ev(1, first_floor_order.floor, RobotLeg.TO_EV_UP)
+    for _ in range(200):
+        r.step()
+        if r.state is RobotState.WAIT_EV:
+            break
+    assert r.state is RobotState.WAIT_EV
+    assert r.direction == -1, (
+        "a same-floor up-leg still computes a DOWN hall call — the guard in "
+        "assign() is the only thing keeping this out of a run"
+    )
+
+
 def test_busy_robot_refuses_a_second_order(model) -> None:
     """1 order / trip (R0-4) — the dispatcher must see this, not silently batch."""
     r = RobotAgent(model)

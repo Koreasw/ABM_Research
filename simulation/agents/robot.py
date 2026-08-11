@@ -203,10 +203,23 @@ class RobotAgent(Agent, GraphWalker):
             raise ValueError(
                 f"robot {self.unique_id} is not dispatchable (state={self.state})"
             )
-        if order.floor < 1:
+        # F1 (Fable 5 리뷰 2026-08-11): the guard is `< 2`, not `< 1`, because
+        # the FSM has no same-floor path. A 1F order would walk to the up-leg
+        # landing and `_register_call` would compute `direction = -1` (dest ==
+        # from), so the robot would ride "down" from 1F to 1F, alight into the
+        # TO_HOME leg and finish the trip with `delivered_at_sec` still None —
+        # a trip counted as completed but never delivered, which under a full
+        # run means `_delivery_complete()` never holds and the run burns to the
+        # `max_overrun` cap. Supporting 1F delivery is NOT a requirement (offices
+        # exist only on floors 2..n — `space.py` `office_floor_ints`, and
+        # `floor_demand.py` draws destinations from 2..n_floors), so the guard
+        # is raised to match the FSM instead of inventing a same-floor path.
+        # No corpus order is refused by this: the refusal is a defect detector.
+        if order.floor < 2:
             raise ValueError(
-                f"robot delivery to floor {order.floor}: robots never enter a "
-                f"basement (결정 #18 / gate B3)"
+                f"robot delivery to floor {order.floor}: robots serve office "
+                f"floors 2+ only — a basement is people-only (결정 #18 / gate B3) "
+                f"and a same-floor (1F) delivery has no FSM path"
             )
         self.order = order
         self.carrying_vol = 0          # loaded at handoff, not at dispatch
