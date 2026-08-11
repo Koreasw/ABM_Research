@@ -787,13 +787,29 @@ _SECTION_ORDER = [
 ]
 
 
-def _fmt(v) -> str:  # noqa: ANN001
+# F8: ratio-valued metrics render to THREE decimals, everything else to two.
+# The module docstring's own example is why: the reason `utilization_ops` exists
+# is that the fixed-window ratio pins at K200 0.735 vs K300 0.738 — a contrast
+# two decimals rounds into a single "0.74" and deletes from the report. Seconds,
+# counts, costs and percentages keep two decimals; widening every float would
+# add three digits of false precision to a 41,407.00 s clock reading.
+# Matched on the metric name (including the dotted sub-key, so `bucket_share.*`
+# and `utilization_ops_by_robot.*` are covered) because the value alone cannot
+# say whether a 0.735 is a ratio or a number of seconds.
+_RATIO_METRIC_TOKENS = ("util", "bucket_share", "_ratio", "_rate")
+
+
+def _is_ratio_metric(metric: str) -> bool:
+    return any(tok in metric for tok in _RATIO_METRIC_TOKENS)
+
+
+def _fmt(v, metric: str = "") -> str:  # noqa: ANN001
     if v is None:
         return "n/a"
     if isinstance(v, bool):
         return str(v)
     if isinstance(v, float):
-        return f"{v:.2f}"
+        return f"{v:.3f}" if _is_ratio_metric(metric) else f"{v:.2f}"
     return str(v)
 
 
@@ -807,16 +823,18 @@ def summary_to_rows(summary: dict) -> list[tuple[str, str, str]]:
                 for metric, value in ev_block.items():
                     if isinstance(value, dict):  # T0a: *_by_kind splits
                         for sub, sub_v in value.items():
-                            rows.append((f"{label} {ev_id}", f"{metric}.{sub}", _fmt(sub_v)))
+                            name = f"{metric}.{sub}"
+                            rows.append((f"{label} {ev_id}", name, _fmt(sub_v, name)))
                         continue
-                    rows.append((f"{label} {ev_id}", metric, _fmt(value)))
+                    rows.append((f"{label} {ev_id}", metric, _fmt(value, metric)))
             continue
         for metric, value in block.items():
             if isinstance(value, dict):  # e.g. rider.n_by_mode
                 for sub, sub_v in value.items():
-                    rows.append((label, f"{metric}.{sub}", _fmt(sub_v)))
+                    name = f"{metric}.{sub}"
+                    rows.append((label, name, _fmt(sub_v, name)))
             else:
-                rows.append((label, metric, _fmt(value)))
+                rows.append((label, metric, _fmt(value, metric)))
     return rows
 
 

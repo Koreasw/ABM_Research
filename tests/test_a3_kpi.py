@@ -533,6 +533,47 @@ def test_kpi_report_renders_the_robot_section(hr_model) -> None:
     assert "Robot,n_robots,5" in summary_to_csv(s)
 
 
+def test_ratio_metrics_render_to_three_decimals() -> None:
+    """F8 — the K200/K300 utilization contrast must survive the report.
+
+    0.735 vs 0.738 is the entire reason `utilization_ops` exists (module
+    docstring), and two-decimal rendering collapsed both to `0.74`. Only ratios
+    widen: seconds and counts stay at two decimals, or the report gains three
+    digits of false precision on a 41,407 s clock reading.
+    """
+    fake = {
+        "robot": {
+            "utilization_fixed_mean": 0.7351,
+            "utilization_ops_by_robot": {"5": 0.7382},
+            "bucket_share": {"wait": 0.5001},
+            "evsel_stale_ratio": 0.5292,
+            "soc_end_pct_mean": 43.216,
+            "distance_traveled_m": 12345.678,
+        },
+        "customer": {"sla_violation_rate": 0.1234, "t_e2e_mean_sec": 1234.567},
+    }
+    got = {metric: value for _, metric, value in summary_to_rows(fake)}
+    assert got["utilization_fixed_mean"] == "0.735"
+    assert got["utilization_ops_by_robot.5"] == "0.738"
+    assert got["bucket_share.wait"] == "0.500"
+    assert got["evsel_stale_ratio"] == "0.529"
+    assert got["sla_violation_rate"] == "0.123"
+    # non-ratios keep two decimals
+    assert got["soc_end_pct_mean"] == "43.22"
+    assert got["distance_traveled_m"] == "12345.68"
+    assert got["t_e2e_mean_sec"] == "1234.57"
+
+
+def test_two_utilizations_stay_distinct_in_the_rendered_report() -> None:
+    """F8, end to end: the two figures must read differently in the artefact."""
+    from simulation.kpi import summary_to_csv, summary_to_markdown
+
+    a = {"robot": {"utilization_ops_mean": 0.7351}}
+    b = {"robot": {"utilization_ops_mean": 0.7382}}
+    assert summary_to_markdown(a) != summary_to_markdown(b)
+    assert "0.735" in summary_to_csv(a) and "0.738" in summary_to_csv(b)
+
+
 def test_csv_report_is_structurally_valid(hr_model) -> None:
     """F4 — every row is 3 columns, including the ones whose value has commas.
 
