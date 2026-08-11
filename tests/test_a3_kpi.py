@@ -22,7 +22,7 @@ import copy
 
 import pytest
 
-from simulation.kpi import _fixed_window, summarize
+from simulation.kpi import _fixed_window, summarize, summary_to_rows
 from simulation.model import ROOT, BuildingHandoffModel, HandoffMode
 from simulation.run import run_baseline
 from simulation.space import load_config
@@ -531,6 +531,33 @@ def test_kpi_report_renders_the_robot_section(hr_model) -> None:
     s = summarize(hr_model)
     assert "## Robot" in summary_to_markdown(s)
     assert "Robot,n_robots,5" in summary_to_csv(s)
+
+
+def test_csv_report_is_structurally_valid(hr_model) -> None:
+    """F4 — every row is 3 columns, including the ones whose value has commas.
+
+    The hand-joined writer emitted `Simulation,ped_window_sec,[41400.0, 72000.0]`
+    (4 columns) and `Building,shared_ev_ids,['EV3', 'EV4']` (4 columns) on every
+    run, so the artefact was structurally broken for any comma-splitting reader.
+    """
+    import csv as _csv
+    import io as _io
+
+    from simulation.kpi import summary_to_csv
+
+    s = summarize(hr_model)
+    text = summary_to_csv(s, meta={"scenario": "K50_1, seed 42"})
+    rows = list(_csv.reader(_io.StringIO(text)))
+    assert rows[0] == ["section", "metric", "value"]
+    assert all(len(r) == 3 for r in rows), (
+        [r for r in rows if len(r) != 3][:5]
+    )
+    body = {(sec, met): val for sec, met, val in rows[1:]}
+    # the values that broke it must be present AND round-trip intact
+    assert body[("meta", "scenario")] == "K50_1, seed 42"
+    assert "," in body[("Simulation", "ped_window_sec")]
+    assert body[("Building", "shared_ev_ids")] == str(s["building"]["shared_ev_ids"])
+    assert len(rows) == 1 + 1 + len(summary_to_rows(s))
 
 
 def test_h0_report_has_no_robot_section(h0_model) -> None:

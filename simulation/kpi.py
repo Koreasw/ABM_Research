@@ -7,6 +7,9 @@ for visualization only.
 
 from __future__ import annotations
 
+import csv
+import io
+
 import numpy as np
 
 
@@ -838,10 +841,20 @@ def summary_to_markdown(summary: dict, meta: dict | None = None) -> str:
 
 
 def summary_to_csv(summary: dict, meta: dict | None = None) -> str:
-    """KPI report as flat CSV: section,metric,value (meta rows prefixed)."""
-    lines = ["section,metric,value"]
+    """KPI report as flat CSV: section,metric,value (meta rows prefixed).
+
+    F4: written by the `csv` module, not by string joining. Every summary
+    contains values with commas in them — `simulation.ped_window_sec` is
+    `[41400.0, 72000.0]`, `building.shared_ev_ids` is `['EV3', 'EV4']`, the
+    `windows` contract rows are prose — so the hand-joined version emitted 4-
+    and 5-column rows into a 3-column file on EVERY run, and any reader that
+    split on commas mis-parsed them. Quoting is the whole fix; the column
+    layout, the row order and the meta prefix are unchanged.
+    """
+    buf = io.StringIO(newline="")
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["section", "metric", "value"])
     for k, v in (meta or {}).items():
-        lines.append(f"meta,{k},{v}")
-    for section, metric, value in summary_to_rows(summary):
-        lines.append(f"{section},{metric},{value}")
-    return "\n".join(lines) + "\n"
+        w.writerow(["meta", k, v])
+    w.writerows(summary_to_rows(summary))
+    return buf.getvalue()
