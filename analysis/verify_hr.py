@@ -841,7 +841,11 @@ def check_end_state(inp: dict) -> CheckResult:
                          f"robot zone")
     unserved = kpi.get("robot", {}).get("n_requests_unserved_at_end")
     if unserved:
-        fails.append(f"{unserved} robot requests still queued at the end")
+        # F3: the field now covers BOTH halves of "not served" — riders still in
+        # the FCFS queue and orders a robot was carrying when the run stopped.
+        # In a completed run both are 0, so the gate's threshold is unchanged.
+        fails.append(f"{unserved} robot requests unserved at the end (queued or "
+                     f"dispatched but undelivered)")
 
     states = sorted({rb["state"] for rb in _fleet(res)})
     return CheckResult(

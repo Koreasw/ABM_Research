@@ -263,6 +263,16 @@ def _robot_block(model, fspan_ticks: int, f0: int, f1: int,  # noqa: ANN001
             stale_ratio = sum(1 for e in calls if e["stale"]) / len(calls)
 
     soc_end = [rb.soc_pct for rb in robots]
+
+    # F3: what the cap cut off. A robot still holding an order at the end has an
+    # unpublished leg; whether its ORDER was served is a separate question, so
+    # the two are counted separately (see the fields below).
+    inflight = [rb for rb in robots if rb.order is not None]
+    n_inflight = len(inflight)
+    n_assigned_undelivered = sum(
+        1 for rb in inflight
+        if model.customer_by_ord_id[rb.order.ord_id].delivered_at_sec is None
+    )
     return {
         "n_robots": n,
         "trips_completed": sum(rb.trips_completed for rb in robots),
@@ -296,8 +306,26 @@ def _robot_block(model, fspan_ticks: int, f0: int, f1: int,  # noqa: ANN001
         ),
         "evsel_stale_ratio": stale_ratio,
         "n_evsel_calls": n_calls,
-        # --- saturation (§3.6) ------------------------------------------------
-        "n_requests_unserved_at_end": len(model.control.robot_requests),
+        # --- saturation (§3.6) + cap censoring (F3) ---------------------------
+        # A run stopped by `max_overrun_sec_robot` leaves work in mid-air, and
+        # before F3 nothing in the summary said so: an unfinished leg is never
+        # written to `robot_leg_records` (only `_finish_trip` publishes), and
+        # `n_requests_unserved_at_end` counted the FCFS queue alone — so an order
+        # that had been dispatched but not completed was invisible on both
+        # sides. Phase D's small-fleet sweep is exactly where that happens.
+        #   * `n_trips_inflight_at_end` — trips with no leg record, i.e. the
+        #     censored work. 0 under any normal termination (the run only ends
+        #     when every carrier has settled), so it is a cap detector.
+        #   * `n_requests_unserved_at_end` — now queue + dispatched-but-not-
+        #     delivered. The two sets are disjoint (a queued rider has no robot
+        #     yet), and a robot still walking home from a COMPLETED delivery is
+        #     counted in `n_trips_inflight_at_end` but NOT here: its order was
+        #     served. Unchanged (0) in every non-cap run.
+        "n_trips_inflight_at_end": n_inflight,
+        "n_requests_queued_at_end": len(model.control.robot_requests),
+        "n_requests_unserved_at_end": (
+            len(model.control.robot_requests) + n_assigned_undelivered
+        ),
     }
 
 
@@ -626,9 +654,19 @@ def summarize(model) -> dict:  # noqa: ANN001
     deliveries = [
         c.delivered_at_sec for c in customers if c.delivered_at_sec is not None
     ]
+    # F5 — `drain_span_sec` is a LENGTH, so its convention is:
+    #     None  the run delivered nothing at all (nothing to measure)
+    #     0.0   deliveries exist but none landed after the fixed window — the
+    #           drain is empty, which is a real answer and not a missing one
+    #     > 0   clock seconds from the last order to the last delivery
+    # Without the 0.0 floor a capped run reports a NEGATIVE span (measured
+    # -54.0 s with `max_overrun_sec_robot=10` on K50_1 s42, `drain_deliveries=0`),
+    # which reads as "the drain ran backwards" and breaks any downstream sum.
+    # Note the floor hides no information: `drain_deliveries == 0` says the drain
+    # was empty, and `terminated_by_cap` says why.
     if fspan is not None:
         w_end = fspan[1]
-        drain_span = (max(deliveries) - w_end) if deliveries else None
+        drain_span = max(0.0, max(deliveries) - w_end) if deliveries else None
         drain_deliveries = sum(1 for t in deliveries if t > w_end)
         drain_boardings = sum(
             1 for ev in model.elevators for b in ev.boarding_log

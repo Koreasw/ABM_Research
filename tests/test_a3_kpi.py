@@ -383,6 +383,71 @@ def test_people_ev_wait_excludes_robot_boardings(hr_model) -> None:
 # ------------------------------------------------------------------- drain
 
 
+@pytest.fixture(scope="module")
+def capped_model():
+    """An H1 run stopped by the safety cap, with work still in mid-air.
+
+    `max_overrun_sec_robot=10` ends K50_1 ten seconds after its last order, so
+    robots are mid-trip and the FCFS queue is non-empty — the state Phase D's
+    small-fleet sweep produces and the one F3/F5 are about. Reached by config
+    injection so no scenario file or fixture run has to be invented for it.
+    """
+    cfg = copy.deepcopy(load_config(CONFIG))
+    cfg["simulation"]["max_overrun_sec_robot"] = 10
+    return _run(HandoffMode.H1_SYNC, config=cfg)
+
+
+def test_cap_termination_reports_the_work_it_cut_off(capped_model) -> None:
+    """F3 — a capped run must SAY that it censored trips, not silently drop them.
+
+    An unfinished leg never reaches `robot_leg_records` (only `_finish_trip`
+    publishes one), so before F3 the whole busiest tail of a capped run was
+    invisible: `n_leg_records` was short of `n_delivered` and no field said why.
+    """
+    s = summarize(capped_model)
+    ro, cu = s["robot"], s["customer"]
+    assert s["simulation"]["terminated_by_cap"] is True
+    inflight = [rb for rb in capped_model.robots if rb.order is not None]
+    assert ro["n_trips_inflight_at_end"] == len(inflight) > 0
+    # the censoring is real: those trips have no leg record
+    assert ro["n_leg_records"] == ro["trips_completed"] < cu["n_delivered"]
+
+
+def test_unserved_count_includes_dispatched_but_undelivered_orders(capped_model) -> None:
+    """F3 — `n_requests_unserved_at_end` counted the FCFS queue only, so an
+    order that had already been handed to a robot was counted nowhere."""
+    s = summarize(capped_model)
+    ro = s["robot"]
+    queued = len(capped_model.control.robot_requests)
+    assigned_undelivered = sum(
+        1 for rb in capped_model.robots
+        if rb.order is not None
+        and capped_model.customer_by_ord_id[rb.order.ord_id].delivered_at_sec is None
+    )
+    assert assigned_undelivered > 0, "no censored order — the regression is vacuous"
+    assert ro["n_requests_queued_at_end"] == queued
+    assert ro["n_requests_unserved_at_end"] == queued + assigned_undelivered
+    # a robot walking home from a COMPLETED delivery is in-flight but NOT unserved
+    assert ro["n_trips_inflight_at_end"] >= assigned_undelivered
+
+
+def test_drain_span_is_never_negative(capped_model) -> None:
+    """F5 — a length has a floor of 0. This run's raw difference is negative."""
+    s = summarize(capped_model)
+    bu = s["building"]
+    deliveries = [
+        c.delivered_at_sec for c in capped_model.customer_by_ord_id.values()
+        if c.delivered_at_sec is not None
+    ]
+    w_end = s["simulation"]["fixed_window_sec"][1]
+    assert max(deliveries) < w_end, (
+        "the last delivery no longer precedes the last order — this run stopped "
+        "exercising the negative branch and the guard is untested"
+    )
+    assert bu["drain_deliveries"] == 0
+    assert bu["drain_span_sec"] == 0.0
+
+
 def test_drain_accounts_for_everything_outside_the_window(hr_model) -> None:
     s = summarize(hr_model)
     bu, cu = s["building"], s["customer"]
