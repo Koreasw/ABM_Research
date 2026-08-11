@@ -9,8 +9,8 @@
 ## §0. 30초 요약
 
 - **H0는 끝났다.** v2.1 검증 게이트 15건 = **PASS 14 / CAUTION 1 / PENDING 0** — 사용자 육안 재서명이 **2026-08-07 PASS로 완료**(`checklist_visual_h0v2.md` §6).
-- **Phase A는 A0~A5 완료(+A5-b 분모 정정, +A5-c 게이트 리뷰 반영), A6·A7 남음.**
-  스위트 **634 passed / 3 skipped**.
+- **Phase A는 A0~A6 완료(+A5-b 분모 정정, +A5-c 게이트 리뷰 반영), A7 남음.**
+  스위트 **646 passed / 3 skipped**.
   H1_SYNC 모드가 열렸다 — `--mode hr`로 K50_1 완주(감사 ON), H0 비트 동일.
   A3로 **측정 창 3층·`T_building_order`·로봇/배터리 KPI·R1~R6 렌더**가,
   A4로 **HR 골든패스 2케이스(전 스탬프 0틱 일치)**가,
@@ -25,7 +25,9 @@
      **포화는 결함이 아니라 결과**이며, 게이트가 아니라 지표로 표현한다.
   3. **Phase 실행 순서가 `A → B → D1 → C → D2 → E → F`로 바뀌었다**(결정 #30).
 
-**다음에 할 일 = Step A6** (§4). A5 게이트 리뷰는 **2026-08-11 실행·반영 완료**(§A5-c).
+**다음에 할 일 = Step A7** (§4). A5 게이트 리뷰는 **2026-08-11 실행·반영 완료**(§A5-c).
+A6 단조성 5방향·극한 2케이스도 **2026-08-11 완료** — 4/5방향 PASS·1방향(④) TIE,
+방향 ②·③은 각 1건씩 FAIL이나 원인 분석 완료(코드 미수정, 상세는 구현 로그 §A6).
 
 ---
 
@@ -337,7 +339,7 @@ EV(18 m)→사무실 = **1 m(EV 지선) + |18 − pos| + 3 m(사무실 지선)**
   K300_4는 uniform·seed 42에서 **16,338틱**에 cap 없이 완주했다.
 - **B7은 같은 틱 도착 쌍을 판정하지 않는다**(힙 시퀀스가 산출물에 없다). K200에서 6쌍.
 
-### Step A6 — 단조성 **5방향** + 극한 2케이스 (소넷 / medium, ~0.75일)
+### Step A6 — 단조성 **5방향** + 극한 2케이스 ✅ **완료 2026-08-11**
 
 ①로봇 **1→3→5** ⇒ 로봇 대기↓ ②K↑ ⇒ **`utilization_ops`↑ · 로봇 EV 대기·`board_denied`↑**
 ③저부하 HR < H0 **④K↑ ⇒ 충전 이벤트↓·종료 SOC↓** **⑤공용 EV 2→3→4 ⇒ 로봇 대기↓**.
@@ -346,6 +348,18 @@ EV(18 m)→사무실 = **1 m(EV 지선) + |18 − pos| + 3 m(사무실 지선)**
 ⓐ가동률을 **고정창**으로 재면 K200 0.735 / K300 0.738로 FLAT이라 정상 모델이 FAIL하고
 ⓑ보행자 대기는 실측이 **K↑에서 오히려 감소**한다(H1 30.08 → 29.73). 둘 다
 `utilization_ops`와 **로봇 측** 경합 지표로 교체됐다.
+
+**실측 결과** (10 seed 평균, `experiments/vv_monotonicity_hr.py` + `results/vv/monotonicity_hr.csv`):
+①**PASS**(로봇 1→3→5: 2,866.7→219.8→20.3 s) ②**FAIL**(`utilization_ops`·`board_denied`는
+3/3 PASS이나 로봇 EV 대기가 K200→K300에서 41.1→35.1 s로 반전 — 원인은 게이트 결함이
+아니라 K300의 긴 드레인이 배경 보행자 감쇠 구간을 K200보다 훨씬 깊이 파고들어 런 전체
+풀링 평균을 희석하기 때문; decay-이전 구간만 비교하면 41.2→41.5 s로 방향이 회복된다)
+③**FAIL**(K50_1 페어드: H0 181.1 s vs HR 188.0 s — §2 A6 사전 경고대로 저부하 순이득이
+얇아 음수로 뒤집혔다. K50_2는 반대 부호(−4.5%)라 "마진이 얇다"는 판정 자체가 실증됨)
+④**TIE**(충전 이벤트 0→0→0→0, §3.5 정본 기대대로; 종료 SOC는 3/3 PASS로 99.9→59.1%)
+⑤**PASS**(공용 EV 2→3→4: 41.1→34.7→31.9 s). 극한 2케이스(로봇 1대 포화 K100_1·보행자
+×10 K50_1) 모두 프로덕션 기본 cap 안에서 완주, `verify_hr` 10/10 PASS. ②·③의 FAIL은
+코드·게이트를 고쳐 지우지 않았다 — 원인 분석은 구현 로그 **§A6**이 정본.
 
 ### Step A7 — `max_overrun` 실측 확정 + 전수 배터리 (소넷 / medium, ~1일)
 
@@ -398,13 +412,20 @@ datacollector 데이터프레임 8회 재생성 162ms)인데 `play_interval=300`
 
 ```bash
 cd /home/sw/Research/abm_new
-.venv/bin/python -m pytest -q                 # 634 passed / 3 skipped
+.venv/bin/python -m pytest -q                 # 646 passed / 3 skipped
 .venv/bin/python -m pytest tests/test_a0_config_wiring.py tests/test_a0_ped_decay.py -q   # 39
 .venv/bin/python -m pytest tests/test_a1_robot.py -q                                       # 23
 .venv/bin/python -m pytest tests/test_a2_handoff.py -q                                     # 26
 .venv/bin/python -m pytest tests/test_a3_kpi.py tests/test_a3_visual.py -q                 # 35
 .venv/bin/python -m pytest tests/test_vv_golden_path_hr.py -q                              # 7
 .venv/bin/python -m pytest tests/test_verify_hr.py -q                                      # 59
+.venv/bin/python -m pytest tests/test_vv_extreme_hr.py -q                                  # 2 (A6 극한)
+```
+
+**A6 단조성 5방향 재실행**(~5분, 180 run):
+```bash
+.venv/bin/python -m experiments.vv_monotonicity_hr
+# writes results/vv/monotonicity_hr.csv — 상세는 구현 로그 §A6
 ```
 
 **H1 스모크(A2 게이트)**:
@@ -422,7 +443,10 @@ cd /home/sw/Research/abm_new
 
 **스위트 수 이력**: v2.1 서명 시점 437 → A0 착수 시점 **441**(계획서의 "440"은 표류값)
 → A0 후 **480** → A1 후 **503** → A2 후 **530** → A3 후 **565** → A4 후 **572**
-→ A5 후 **614** → A5-b 후 **619** → A5-c 후 **634**.
+→ A5 후 **614** → A5-b 후 **619** → A5-c 후 **634** → Fable F1~F9 리뷰 반영 후 **644**
+→ A6 후 **646**(`tests/test_vv_extreme_hr.py` 2건 신설; 단조성 5방향은 pytest 래퍼가
+없다 — H0의 `vv_monotonicity.py`와 동일 관행, `experiments/vv_monotonicity_hr.py`로
+별도 재실행).
 
 ---
 
