@@ -1,4 +1,4 @@
-"""Tests for analysis/verify_hr.py (B1..B11 gates).
+"""Tests for analysis/verify_hr.py (B1..B18 gates).
 
 Same contract as `test_verify_h0.py`: every gate passes on real HR runs, and
 every gate has a negative case — a deliberately corrupted field that must flip
@@ -13,6 +13,13 @@ Two properties specific to this module are pinned as well:
     result, not a defect (§3.6).
   * the dedicated-car sub-check SKIPS rather than passes when every car is
     robot-shareable (결정 13). A vacuous PASS reads as evidence.
+
+The A7-a block at the bottom of the file (B12..B18) is stricter still about
+what counts as a negative case: every corruption there is one the A5-c gate
+review MEASURED the B1..B11 set passing on a real artefact — a rewritten
+headline mean, an inverted SLA column, a deleted warm-up block, a car removed
+from the KPI, `ready` moved an hour before its order. The gate that now owns
+each of them is pinned by the test named after it.
 """
 
 from __future__ import annotations
@@ -95,7 +102,7 @@ def test_all_gates_pass_on_a_healthy_run(base):
     assert report["all_passed"], [
         (c.name, c.failures[:3]) for c in report["checks"] if not c.passed
     ]
-    assert len(report["checks"]) == 10          # B1..B5, B7..B11
+    assert len(report["checks"]) == 17          # B1..B5, B7..B18 (no B6)
     assert not any(c.skipped for c in report["checks"])
 
 
@@ -176,8 +183,10 @@ def test_b1_negative_undelivered_order(base):
     bad = copy.deepcopy(base)
     bad["kpi_summary"]["customer"]["n_delivered"] -= 1
     # B11 asserts delivered == K as well — deliberately, since "the run ended
-    # because the work ended" is not the same claim as "the work is conserved"
-    _assert_gate_fails(bad, "B1", also=("B11",))
+    # because the work ended" is not the same claim as "the work is conserved".
+    # B12 too: `n_delivered` is the SLA rate's denominator, and it re-derives
+    # both from the per-order source.
+    _assert_gate_fails(bad, "B1", also=("B11", "B12"))
 
 
 def test_b1_negative_leg_without_a_return(base):
@@ -218,7 +227,10 @@ def test_b3_negative_robot_on_a_dedicated_car(base):
 def test_b3_negative_robot_in_the_basement(base):
     bad = copy.deepcopy(base)
     bad["robot_legs"][0]["floor"] = -1
-    _assert_gate_fails(bad, "B3")
+    # B16 owns the RANGE [2, n_floors]; B3 owns "no basement" specifically. A
+    # basement floor violates both, and the overlap is deliberate — B3 names the
+    # physical claim, B16 the admissible set.
+    _assert_gate_fails(bad, "B3", also=("B16",))
 
 
 def test_b3_negative_capacity_violation(base):
@@ -240,7 +252,9 @@ def test_b4_negative_leg_faster_than_physics(base):
     bad = copy.deepcopy(base)
     lg = bad["robot_legs"][0]
     lg["delivered_at_sec"] = lg["handoff_ended_sec"] + 1.0
-    _assert_gate_fails(bad, "B4")
+    # B12 too: the delivery stamp is where every customer aggregate starts, so
+    # moving it necessarily breaks the re-derivation of t_e2e and the rest
+    _assert_gate_fails(bad, "B4", also=("B12",))
 
 
 def test_b4_negative_instant_return(base):
@@ -406,7 +420,9 @@ def test_b11_accepts_a_charging_robot_at_home(base):
 def test_b11_negative_requests_left_in_the_queue(base):
     bad = copy.deepcopy(base)
     bad["kpi_summary"]["robot"]["n_requests_unserved_at_end"] = 3
-    _assert_gate_fails(bad, "B11")
+    # B17 too, and from the other side: B11 says "unserved must be zero in a
+    # completed run", B17 says "3 unserved cannot coexist with 0 undelivered"
+    _assert_gate_fails(bad, "B11", also=("B17",))
 
 
 # --------------------------------------------------- robustness of the gates
@@ -485,7 +501,11 @@ def test_b7_catches_a_violation_that_straddles_a_same_tick_tie(base):
     legs[first["ord_id"]]["assigned_at_sec"] = (
         legs[later["ord_id"]]["assigned_at_sec"] + 5000.0
     )
-    _assert_gate_fails(bad, "B7", also=("B2",))
+    # B2 (the assignment now follows its own handoff) plus, because the tie is
+    # manufactured by moving an entry time backwards: B15 (the courier now
+    # enters before it arrived) and B12 (T_building_order is measured from that
+    # entry). All three are the corruption, seen from three different chains.
+    _assert_gate_fails(bad, "B7", also=("B2", "B12", "B15"))
 
 
 def test_b7_still_refuses_to_order_within_a_tie(base):
@@ -562,7 +582,10 @@ def test_b1_negative_order_dropped_from_the_whole_artefact(base):
     for key in ("n_orders", "n_delivered"):
         bad["kpi_summary"]["customer"][key] -= 1
     bad["kpi_summary"]["rider"]["n_exited"] -= 1
-    _assert_gate_fails(bad, "B1")
+    # B12 catches it independently, and that is the point of having both: the
+    # counters were made self-consistent, but the AGGREGATES still average the
+    # 50 orders that were measured, not the 49 that remain
+    _assert_gate_fails(bad, "B1", also=("B12",))
 
 
 def test_b1_reports_when_the_scenario_is_unreachable(base):
@@ -633,6 +656,207 @@ def test_b9_checks_the_handoff_claim_even_on_a_mapping_run(base):
     b9 = _check(report, "B9")
     assert not b9.passed
     assert any("never uses the vertical system" in f for f in b9.failures)
+
+
+# =====================================================================
+# A7-a — B12..B18. Every corruption below is one the B1..B11 set was
+# MEASURED to pass in the A5-c review (etc/scie_phase/design_a7a_gates.md);
+# each is pinned here as the gate that now owns it.
+# =====================================================================
+
+
+def test_b12_negative_headline_mean_rewritten(base):
+    """The review's sharpest finding: the paper's own number was ungated."""
+    bad = copy.deepcopy(base)
+    bad["kpi_summary"]["customer"]["t_e2e_mean_sec"] = 1.0
+    _assert_gate_fails(bad, "B12")
+
+
+def test_b12_negative_sla_verdict_inverted(base):
+    """Flipping every SLA verdict passed all ten gates before B12."""
+    bad = copy.deepcopy(base)
+    cu = bad["kpi_summary"]["customer"]
+    cu["n_sla_violations"] = cu["n_delivered"] - cu["n_sla_violations"]
+    cu["sla_violation_rate"] = cu["n_sla_violations"] / cu["n_delivered"]
+    for rec in bad["per_order"]:
+        rec["sla_violation"] = True
+    _assert_gate_fails(bad, "B12")
+
+
+def test_b12_negative_building_interval_shorter_than_the_handoff(base):
+    """The physical floor: the food was inside for at least its own handoff.
+
+    Driven from the CONFIG side (the declared handoff service time), so the
+    gate is anchored to the design constant and not only to the artefact's own
+    drawn value — a run whose per-order draws were rewritten in step with its
+    stamps still has to clear the design floor.
+    """
+    bad = copy.deepcopy(base)
+    bad["config"]["handoff"]["service_mean_sec"] = 10_000.0
+    _assert_gate_fails(bad, "B12")
+
+
+def test_b12_reports_the_h1_join_rather_than_the_courier_row(base):
+    """In H1 the courier's row has no delivery — the leg does (A2 함정 2)."""
+    assert all(r["delivered_at_sec"] is None for r in base["per_order"])
+    b12 = _check(verify_result(base), "B12")
+    assert b12.passed
+    assert "ord_id join" in b12.detail
+
+
+def test_b13_negative_warmup_block_deleted(base):
+    """A13 SKIPs a missing block; B13 must FAIL — no HR run predates R8-b."""
+    bad = copy.deepcopy(base)
+    del bad["kpi_summary"]["simulation"]["warmup"]
+    _assert_gate_fails(bad, "B13")
+    b13 = _check(verify_result(bad), "B13")
+    assert not b13.skipped, "a missing measurement must not read as a skip"
+
+
+def test_b13_negative_cold_building(base):
+    """The failure the gate exists for: H1 run cold, so EV waits look free."""
+    bad = copy.deepcopy(base)
+    bad["kpi_summary"]["simulation"]["warmup"]["util_at_first_order"] = 0.0
+    _assert_gate_fails(bad, "B13")
+
+
+def test_b13_negative_head_shorter_than_saturation(base):
+    """A declared head below the measured saturation time is not a warm-up."""
+    bad = copy.deepcopy(base)
+    bad["kpi_summary"]["simulation"]["warmup"]["head_sec"] = 120.0
+    _assert_gate_fails(bad, "B13")
+
+
+def test_b14_negative_alights_do_not_balance(base):
+    """`EV2.n_alights -= 5` — a live edit that passed all ten gates."""
+    bad = copy.deepcopy(base)
+    bad["kpi_summary"]["elevator"]["EV2"]["n_alights"] -= 5
+    _assert_gate_fails(bad, "B14")
+
+
+def test_b14_negative_declared_car_missing_from_the_kpi(base):
+    """Deleting a whole car's block used to cost nothing."""
+    bad = copy.deepcopy(base)
+    del bad["kpi_summary"]["elevator"]["EV4"]
+    _assert_gate_fails(bad, "B14")
+
+
+def test_b14_negative_robot_dropped_from_the_by_kind_split(base):
+    """F2's defect, gated: the split silently omitted every robot boarding."""
+    bad = copy.deepcopy(base)
+    del bad["kpi_summary"]["elevator"]["EV3"]["n_boardings_by_kind"]["robot"]
+    _assert_gate_fails(bad, "B14")
+
+
+def test_b15_negative_ready_before_the_order(base):
+    """`ready` an hour ahead of the order passed all ten gates before B15."""
+    bad = copy.deepcopy(base)
+    bad["per_order"][0]["ready_time_sec"] -= 3600.0
+    _assert_gate_fails(bad, "B15")
+
+
+def test_b15_negative_arrival_not_reconstructible(base):
+    """The identity arm: arrival == dispatch + horizontal, for any σ."""
+    bad = copy.deepcopy(base)
+    bad["per_order"][0]["horizontal_time_s"] += 10.0
+    _assert_gate_fails(bad, "B15")
+
+
+def test_b16_negative_delivery_to_the_lobby_floor(base):
+    """floor 1 has no office node: B4 used to CRASH, and nobody owned it.
+
+    Both halves are asserted — the range failure is reported by B16, and B4
+    survives to return a verdict on the other 49 legs instead of losing them
+    to a `NodeNotFound` traceback.
+    """
+    bad = copy.deepcopy(base)
+    bad["robot_legs"][0]["floor"] = 1
+    _assert_gate_fails(bad, "B16")
+    report = verify_result(bad)
+    b4 = _check(report, "B4")
+    assert "gate crashed" not in b4.detail, "B4 must skip the leg, not crash"
+    assert b4.passed and "1 leg(s) unusable" in b4.detail
+
+
+def test_b16_negative_delivery_above_the_top_floor(base):
+    bad = copy.deepcopy(base)
+    bad["robot_legs"][0]["floor"] = bad["config"]["building"]["n_floors"] + 1
+    _assert_gate_fails(bad, "B16")
+
+
+def test_b17_negative_trips_in_flight_after_a_clean_finish(base):
+    """F3's cap detector: a completed run has nothing in mid-air."""
+    bad = copy.deepcopy(base)
+    bad["kpi_summary"]["robot"]["n_trips_inflight_at_end"] = 3
+    _assert_gate_fails(bad, "B17")
+
+
+def test_b17_negative_unserved_does_not_decompose(base):
+    """`unserved` must be queue + carried, and both are reported separately."""
+    bad = copy.deepcopy(base)
+    bad["kpi_summary"]["robot"]["n_requests_queued_at_end"] = 2
+    _assert_gate_fails(bad, "B17")
+
+
+def test_b17_negative_f3_fields_absent(base):
+    """A run without the F3 counters cannot say whether it was censored."""
+    bad = copy.deepcopy(base)
+    del bad["kpi_summary"]["robot"]["n_trips_inflight_at_end"]
+    _assert_gate_fails(bad, "B17")
+
+
+def test_a_real_cap_termination_is_reported_as_non_quotable():
+    """B17-2 (사용자 확정): a censored run must not have its load quoted.
+
+    Built by actually capping the run rather than by editing a flag, because
+    the question the design asked — "does B11 already fail this?" — is only
+    answerable on the real artefact. It does, on four counts; what B17-2 adds
+    is the CONSEQUENCE in the message, since `utilization_ops` and `drain_*`
+    are computed over a window that ends at the last completed event.
+    """
+    cfg = copy.deepcopy(load_config(CONFIG))
+    cfg["simulation"]["max_overrun_sec_robot"] = 600      # cuts K50_1 short
+    res = _run("K50_1", config=cfg)
+    assert res["kpi_summary"]["simulation"]["terminated_by_cap"] is True
+
+    report = verify_result(res)
+    b11 = _check(report, "B11")
+    assert not b11.passed
+    censored = [f for f in b11.failures if "CENSORED" in f]
+    assert censored, "a cap run must be named as censored"
+    assert "utilization_ops" in censored[0] and "drain_" in censored[0]
+    assert "max_overrun_sec_robot" in censored[0]
+    # B17 stays consistent on the same artefact: the F3 decomposition holds
+    # even though the run itself is a failure
+    assert _check(report, "B17").passed
+    assert not any("gate crashed" in c.detail for c in report["checks"])
+
+
+def test_b18_negative_denials_above_the_frozen_ceiling(base):
+    """No gate watched the deny channel at all (A5-⑤-2, A6 이월 3)."""
+    from analysis.verify_hr import BOARD_DENIED_MAX
+
+    bad = copy.deepcopy(base)
+    k = bad["kpi_summary"]["customer"]["n_orders"]
+    bad["kpi_summary"]["robot"]["n_board_denied"] = BOARD_DENIED_MAX[k] + 1
+    _assert_gate_fails(bad, "B18")
+
+
+def test_b18_skips_outside_the_calibrated_envelope(base):
+    """The ceiling was measured at one fleet size and one pedestrian rate.
+
+    Applying it to a sizing sweep would judge a number against an envelope
+    that never contained it — the pedestrian-rush extreme case scores 737 on
+    this same K50 scenario and is a RESULT, not a regression.
+    """
+    bad = copy.deepcopy(base)
+    bad["kpi_summary"]["robot"]["n_robots"] = 3
+    bad["kpi_summary"]["robot"]["n_board_denied"] = 10_000
+    report = verify_result(bad)
+    b18 = _check(report, "B18")
+    assert b18.skipped and b18.passed
+    assert "outside the calibrated envelope" in b18.detail
+    assert "fleet 3" in b18.detail
 
 
 def test_cli_keeps_going_after_an_unverifiable_file(tmp_path, base):

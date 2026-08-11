@@ -1,4 +1,4 @@
-"""V-HR — H1 (robot relay) results verifier: gates B1..B11.
+"""V-HR — H1 (robot relay) results verifier: gates B1..B18.
 
     .venv/bin/python -m analysis.verify_hr results/baseline_hr_K50_1_uniform_s42.json
 
@@ -42,24 +42,52 @@ A-gate map where A6 is an H0-only elevator-consistency check):
                              a low-SOC return resumes only above soc_resume_pct
   B11 end state              every robot parked at home, delivered == K strictly
 
+A7-a additions (`etc/scie_phase/design_a7a_gates.md`). Each closes a hole the
+A5-c gate review MEASURED — every one of them was a live artefact edit that the
+B1..B11 set passed:
+
+  B12 order outcomes         t_e2e / T_building_order / post-handoff aggregates
+                             and the SLA verdict re-derived from per-order source
+  B13 warm-up adequacy       the H1 form of H0's A13 — a missing `warmup` block
+                             is a FAIL here, not a SKIP
+  B14 EV car conservation    per car: boardings − alights == still aboard,
+                             by-kind sum == boardings (robot INCLUDED, F2),
+                             reported car set == the config's declared set
+  B15 upstream chain         ord ≤ ready ≤ dispatch ≤ arrival ≤ entered, and
+                             arrival reconstructed from dispatch + horizontal
+  B16 leg floor range        every robot leg delivers to floor ∈ [2, n_floors]
+  B17 terminal accounting    the F3 end-state fields decompose consistently;
+                             a completed run leaves nothing in flight or queued
+  B18 board-denied bound     per-tier ceiling on `n_board_denied` (mean + 4σ)
+
 CONDITIONAL SKIP (결정 13). With a four-shared-car configuration the dedicated
 set is empty, so B3's "a robot never boards a dedicated car" is vacuously true.
 A vacuous PASS is worse than no result — it reads as evidence. The sub-check is
-skipped and said to be skipped, exactly as A12 does in the H0 verifier.
+skipped and said to be skipped, exactly as A12 does in the H0 verifier. B18 is
+the one A7-a gate that can skip, and for the same kind of reason: its ceiling
+was calibrated on ONE configuration (5 robots, 7.5 ped/min, two shared cars),
+so applying it to a fleet-sizing or pedestrian-rush run would be judging a
+number against an envelope that never contained it. It says so instead.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from analysis.verify_h0 import (
     FLOAT_TOL,
+    WARMUP_MIN_HEAD_SEC,
+    WARMUP_RATIO_FLOOR,
     CheckResult,
     _gof,
     _graph_and_kin,
+    _pax_on_board_at_end,
     _resolve,
     _tick,
     _timer_ticks,
@@ -74,6 +102,18 @@ from simulation.floor_demand import rederive_profile_assignment
 # at-home state added to the enum has no mechanical link to a hand-written
 # tuple, so B11 would start failing every run that legitimately ends in it.
 PARKED_STATES = (RobotState.IDLE.value, RobotState.CHARGING_BLOCKED.value)
+
+# Gate names for the A7-a additions, defined ONCE. B1..B11 spell their name
+# twice — inside the check and again at the `_guard` call site — which means a
+# crash and a verdict can be reported under different names (§A5-c-④ #7, still
+# open for Phase B). The new gates do not add to that debt.
+B12_NAME = "B12 order outcomes (aggregates re-derived from source)"
+B13_NAME = "B13 warm-up adequacy"
+B14_NAME = "B14 EV car conservation + declaration parity"
+B15_NAME = "B15 upstream chain (order -> entry)"
+B16_NAME = "B16 leg floor range"
+B17_NAME = "B17 terminal accounting"
+B18_NAME = "B18 board-denied bound"
 
 
 def _legs(res: dict) -> dict[int, dict]:
@@ -381,6 +421,7 @@ def check_robot_kinematics(inp: dict, tick: float) -> tuple[CheckResult, dict]:
     """
     res = inp["res"]
     cfg = res["config"]
+    n_floors = int(cfg["building"]["n_floors"])
     g, kin = _graph_and_kin(res)
     fails: list[str] = []
     slacks_up: list[float] = []
@@ -388,13 +429,17 @@ def check_robot_kinematics(inp: dict, tick: float) -> tuple[CheckResult, dict]:
     n_unusable = 0
 
     for oid, lg in sorted(_legs(res).items()):
-        # A leg missing a stamp, missing a car, or claiming a basement floor is
-        # already a B1/B3 failure. Skipping it here keeps each defect reported
-        # once, by the gate that owns it — and, just as importantly, keeps this
-        # gate from crashing on a malformed artefact. A verifier that raises
-        # instead of reporting is useless precisely when it is needed.
+        # A leg missing a stamp, missing a car, or claiming a floor outside
+        # [2, n_floors] is already a B1/B3/B16 failure. Skipping it here keeps
+        # each defect reported once, by the gate that owns it — and, just as
+        # importantly, keeps this gate from crashing on a malformed artefact. A
+        # verifier that raises instead of reporting is useless precisely when it
+        # is needed. The floor test is the FULL range, not just `< 1`: floor 1
+        # and floor n+1 have no office node, so `_leg_bounds` raised
+        # `NodeNotFound` on them and B4's whole verdict was lost to a crash on
+        # the one defect B16 now owns (§A5-c-④ #5).
         if (lg.get("ev_id_up") is None or lg.get("ev_id_down") is None
-                or lg.get("floor") is None or lg["floor"] < 1
+                or lg.get("floor") is None or not (2 <= lg["floor"] <= n_floors)
                 or any(lg.get(k) is None for k in
                        ("handoff_ended_sec", "delivered_at_sec", "returned_at_sec",
                         "ev_wait_up_sec", "ev_wait_down_sec"))):
@@ -426,13 +471,13 @@ def check_robot_kinematics(inp: dict, tick: float) -> tuple[CheckResult, dict]:
         # as evidence that physics was checked. Report SKIP instead.
         return CheckResult(
             "B4 robot kinematics (lower bound)", True,
-            f"SKIP: no usable leg ({n_unusable} unusable — reported by B1/B3)",
+            f"SKIP: no usable leg ({n_unusable} unusable — reported by B1/B3/B16)",
             skipped=True,
         ), report
     detail = (f"{report['n_legs']} legs; min slack up/down "
               f"{report['min_slack_up_sec']}/{report['min_slack_down_sec']}s")
     if n_unusable:
-        detail += f"; {n_unusable} leg(s) unusable (reported by B1/B3)"
+        detail += f"; {n_unusable} leg(s) unusable (reported by B1/B3/B16)"
     return CheckResult("B4 robot kinematics (lower bound)", not fails, detail, fails), report
 
 
@@ -791,6 +836,16 @@ def check_end_state(inp: dict) -> CheckResult:
     distinction matters because the corpus is expected to saturate: the response
     is to raise `max_overrun_sec_robot` and re-run, not to declare the model
     broken (점검 §10.1-B).
+
+    B17-2 (A7-a, 사용자 확정 2026-08-11) lands in that message rather than in a
+    gate of its own. The requirement is that a censored run be non-quotable: the
+    ops window's right edge is the last COMPLETED event (kpi.py's definition is
+    unchanged — that was the decision), so on a cap termination `utilization_ops`
+    and `drain_*` are computed over a window that stops before the busiest final
+    stretch and read as *stability*. Measured on a real cap run (K50_1,
+    `max_overrun_sec_robot` = 600 s) this gate already fails on four counts, so a
+    second gate would only fire where this one does; what was missing was the
+    consequence, which the message now states.
     """
     res = inp["res"]
     sim = res["kpi_summary"]["simulation"]
@@ -812,7 +867,14 @@ def check_end_state(inp: dict) -> CheckResult:
         fails.append(f"termination_reason={reason!r} (policy={policy!r} expects "
                      f"{expected!r}{cap_note})")
     if sim.get("terminated_by_cap"):
-        fails.append("run hit the overrun cap")
+        fails.append(
+            "run hit the overrun cap — this is a CENSORED run and must not be "
+            "quoted: `utilization_ops` and `drain_*` are measured over a window "
+            "that ends at the last COMPLETED event, so the busiest final stretch "
+            "is missing from the denominator and the run reads as more stable "
+            "than it was. Raise `max_overrun_sec_robot` or the fleet size and "
+            "re-run (B17-2)"
+        )
     if kpi["customer"]["n_delivered"] != kpi["customer"]["n_orders"]:
         fails.append(f"delivered {kpi['customer']['n_delivered']} != "
                      f"K={kpi['customer']['n_orders']}")
@@ -853,6 +915,592 @@ def check_end_state(inp: dict) -> CheckResult:
         not fails,
         f"{reason}; {len(_fleet(res))} robots parked ({', '.join(states) or 'none'}), "
         f"delivered={kpi['customer']['n_delivered']}/{kpi['customer']['n_orders']}",
+        fails,
+    )
+
+
+# ------------------------------------------------------------------ B12 / B13
+
+
+def _mean_np(xs: list[float]) -> float:
+    """`kpi.py::_mean` — same library call, independent input path."""
+    return float(np.mean(xs))
+
+
+def _p95_np(xs: list[float]) -> float:
+    """`kpi.py::_p95` — same library call, independent input path."""
+    return float(np.percentile(xs, 95))
+
+
+def check_order_outcomes(inp: dict) -> CheckResult:
+    """B12: the paper's headline numbers, re-derived from the per-order source.
+
+    The A5-c review's sharpest finding: `t_e2e_mean_sec = 1.0` and a wholesale
+    inversion of the SLA verdict BOTH passed all ten gates. The customer block
+    is what the paper quotes, and nothing was reading it.
+
+    Where the truth lives in H1 is the whole difficulty. The courier's record is
+    filed when the courier EXITS, which happens at the handoff — long before the
+    delivery — so `per_order[i].delivered_at_sec` is None in every healthy HR
+    run (A2 함정 2). The delivery stamp is on the robot's leg. Every aggregate
+    below is therefore rebuilt across the `ord_id` JOIN:
+
+        t_e2e              = leg.delivered_at   − courier.ord_time_abs
+        T_building_order   = leg.delivered_at   − courier.entered_at
+        post-handoff       = leg.delivered_at   − courier.handoff_started
+        SLA violation      = leg.delivered_at   > courier.deadline_abs
+
+    which is the same join `kpi.py` makes from the model objects, from the other
+    end. Both must agree, and neither can be edited into agreement with the
+    other without editing the source rows — which B1/B2/B15 then judge.
+
+    When some order has no published delivery the aggregates are NOT compared:
+    a cap-truncated run legitimately has fewer legs than orders, B1 owns that
+    defect, and re-reporting it here as five aggregate mismatches would bury the
+    one line that says what actually happened. The per-order arms still run.
+    """
+    res = inp["res"]
+    legs = _legs(res)
+    kpi_c = res["kpi_summary"]["customer"]
+    fails: list[str] = []
+
+    # the drawn handoff is the order's own; the config mean is the design floor
+    # the drawn value scatters around. A building interval shorter than either
+    # is a physical impossibility — the food cannot have been handed over.
+    cfg_handoff = float(res["config"]["handoff"]["service_mean_sec"])
+
+    t_e2e: list[float] = []
+    t_building: list[float] = []
+    t_post: list[float] = []
+    n_violations = 0
+    n_unusable = 0
+
+    for rec in res["per_order"]:
+        oid = rec["ord_id"]
+        lg = legs.get(oid)
+        delivered = None if lg is None else lg.get("delivered_at_sec")
+        if delivered is None:
+            n_unusable += 1                      # B1 owns the missing leg/stamp
+            continue
+        own = rec.get("delivered_at_sec")
+        if own is not None and abs(own - delivered) > FLOAT_TOL:
+            fails.append(f"ord {oid}: courier row says delivered {own}, leg says "
+                         f"{delivered}")
+        ord_abs, entered = rec.get("ord_time_abs_sec"), rec.get("entered_at_sec")
+        if ord_abs is None or entered is None:
+            n_unusable += 1                      # B1/B15 own the missing stamp
+            continue
+        t_e2e.append(delivered - ord_abs)
+        t_bld = delivered - entered
+        t_building.append(t_bld)
+
+        floor_sec = max(cfg_handoff, float(rec.get("handoff_sec") or 0.0))
+        if t_bld < floor_sec - FLOAT_TOL:
+            fails.append(
+                f"ord {oid}: T_building_order {t_bld:.1f}s < the handoff alone "
+                f"({floor_sec:.1f}s) — the food cannot have been handed over"
+            )
+        hs = rec.get("handoff_started_sec")
+        if hs is not None:
+            t_post.append(delivered - hs)
+
+        deadline = rec.get("deadline_abs_sec")
+        if deadline is None:
+            fails.append(f"ord {oid}: no deadline recorded — the SLA verdict "
+                         f"cannot be re-derived")
+        else:
+            violated = delivered > deadline
+            n_violations += int(violated)
+            # the courier row carries the customer's verdict as of the courier's
+            # exit; when it is filled in it must agree with the re-derivation
+            own_sla = rec.get("sla_violation")
+            if own_sla is not None and bool(own_sla) != violated:
+                fails.append(
+                    f"ord {oid}: recorded sla_violation={own_sla}, but delivery "
+                    f"{delivered} vs deadline {deadline} says {violated}"
+                )
+
+    def _agrees(field: str, got, expected) -> None:  # noqa: ANN001
+        if got is None or abs(float(got) - expected) > FLOAT_TOL:
+            fails.append(f"customer.{field} = {got} != {expected} re-derived "
+                         f"from per_order x robot_legs")
+
+    if n_unusable:
+        detail_head = (f"aggregates NOT re-derived: {n_unusable} order(s) have no "
+                       f"published delivery (B1 owns)")
+    else:
+        detail_head = f"{len(t_e2e)} orders re-derived across the ord_id join"
+        _agrees("n_delivered", kpi_c.get("n_delivered"), float(len(t_e2e)))
+        _agrees("t_e2e_mean_sec", kpi_c.get("t_e2e_mean_sec"), _mean_np(t_e2e))
+        _agrees("t_e2e_p95_sec", kpi_c.get("t_e2e_p95_sec"), _p95_np(t_e2e))
+        _agrees("n_building_order", kpi_c.get("n_building_order"),
+                float(len(t_building)))
+        _agrees("t_building_order_mean_sec", kpi_c.get("t_building_order_mean_sec"),
+                _mean_np(t_building))
+        _agrees("t_building_order_p95_sec", kpi_c.get("t_building_order_p95_sec"),
+                _p95_np(t_building))
+        if t_post:
+            _agrees("t_order_post_handoff_mean_sec",
+                    kpi_c.get("t_order_post_handoff_mean_sec"), _mean_np(t_post))
+            _agrees("t_order_post_handoff_p95_sec",
+                    kpi_c.get("t_order_post_handoff_p95_sec"), _p95_np(t_post))
+        _agrees("n_sla_violations", kpi_c.get("n_sla_violations"),
+                float(n_violations))
+        rate = kpi_c.get("sla_violation_rate")
+        expected_rate = (n_violations / len(t_e2e)) if t_e2e else None
+        if expected_rate is not None and (
+                rate is None or abs(float(rate) - expected_rate) > FLOAT_TOL):
+            fails.append(f"customer.sla_violation_rate = {rate} != "
+                         f"{expected_rate} = {n_violations}/{len(t_e2e)}")
+
+    return CheckResult(
+        B12_NAME,
+        not fails,
+        f"{detail_head}; SLA {n_violations}/{len(t_e2e)} violations re-derived "
+        f"from deadline_abs_sec; T_building_order floor = max(handoff drawn, "
+        f"{cfg_handoff:.0f}s config)",
+        fails,
+    )
+
+
+def check_warmup_hr(inp: dict) -> CheckResult:
+    """B13: the building was warm when the first order landed — H1's A13.
+
+    Same threshold as H0's A13 and deliberately so: what the warm-up warms is
+    the BACKGROUND pedestrian process, which is mode-invariant (§3.7's fixed
+    window rests on the same fact), so a ratio calibrated on H0 is calibrated
+    for H1. Measured on HR (K50_1 + K300_4 x heads {0, 300, 600} x 5 seeds,
+    ratio against the fixed-window utilisation): head 0 scores EXACTLY 0.000 in
+    all ten runs, head 300 spans [0.678, 1.136] and head 600 spans
+    [0.647, 1.018] — the cold and warm populations are separated by the whole
+    interval (0.000, 0.647], and 0.35 sits inside it just as it does in H0.
+
+    A MISSING `warmup` block is a FAIL here, where A13 skips. The skip exists in
+    H0 because artefacts predating R8-b carry no such block; every HR artefact
+    that has ever existed was produced after it, so "the measurement is absent"
+    can only mean the run did not take it — and deleting the block was one of
+    the edits that passed all ten gates in the A5-c review.
+
+    The empirical arms narrow (not skip) when the config declares no background
+    stream: with `arrival_rate_per_min == 0` there is nothing to warm the
+    building WITH, so a zero busy fraction is the correct outcome. The
+    structural and head-length arms stay live either way.
+    """
+    res = inp["res"]
+    sim = res["kpi_summary"]["simulation"]
+    warm = sim.get("warmup")
+    if warm is None:
+        return CheckResult(
+            B13_NAME, False,
+            "no kpi_summary.simulation.warmup block",
+            ["the run recorded no warm-up measurement — an H1 artefact cannot "
+             "predate R8-b, so this means the snapshot was not taken (or was "
+             "removed); H0 vs H1 EV waits are not comparable without it"],
+        )
+    fails: list[str] = []
+    evs = res["kpi_summary"]["elevator"]
+
+    # B13-3 (structural) first: a snapshot that disagrees with the declared
+    # window makes the empirical arms meaningless, so it is checked before them.
+    head = warm.get("head_sec")
+    ord_abs = [r["ord_time_abs_sec"] for r in res["per_order"]
+               if r.get("ord_time_abs_sec") is not None]
+    clock_start = sim.get("clock_start_sec")
+    if head is None:
+        fails.append("warmup block has no head_sec")
+    elif ord_abs and clock_start is not None:
+        expected = min(ord_abs) - clock_start
+        if abs(head - expected) > FLOAT_TOL:
+            fails.append(f"warmup.head_sec {head} != min ORD_TIME - clock_start "
+                         f"{expected}")
+
+    # B13-1 (config): the head must cover the measured background saturation.
+    if head is not None and head < WARMUP_MIN_HEAD_SEC - FLOAT_TOL:
+        fails.append(f"warm-up head {head:.0f}s < {WARMUP_MIN_HEAD_SEC:.0f}s "
+                     "(background traffic needs 300~600 s to saturate)")
+
+    ped_rate = float(res["config"]["pedestrian"].get("arrival_rate_per_min", 0.0))
+    util_fixed = [e["utilization_fixed"] for e in evs.values()
+                  if e.get("utilization_fixed") is not None]
+    ratio = None
+    if ped_rate > 0:
+        # B13-2 (empirical): was the building actually busy, or only scheduled
+        # to be? The denominator is layer ①, the mode-invariant window (§3.7).
+        busy = warm.get("util_at_first_order")
+        if busy is None or not math.isfinite(float(busy)):
+            fails.append(f"util_at_first_order={busy!r} — the warm-up was not "
+                         f"measured, so 'the building was warm' is unevidenced")
+        elif not util_fixed:
+            fails.append("no fixed-window utilisation on any car — the warm-up "
+                         "ratio has no denominator")
+        else:
+            denom = _mean_np(util_fixed)
+            if denom <= 0:
+                fails.append(f"fixed-window utilisation is {denom} — no car "
+                             f"moved inside the demand window")
+            else:
+                ratio = float(busy) / denom
+                if ratio < WARMUP_RATIO_FLOOR:
+                    fails.append(
+                        f"EV busy fraction at the first order is {busy:.3f}, only "
+                        f"{ratio:.2f}x the fixed-window {denom:.3f} (floor "
+                        f"{WARMUP_RATIO_FLOOR}) — the building was cold"
+                    )
+        if not warm.get("peds_at_first_order"):
+            fails.append("no pedestrian was in the building when the first order "
+                         f"landed (background stream declares {ped_rate}/min)")
+
+    ratio_txt = f"{ratio:.2f}x" if ratio is not None else "n/a"
+    empirical = (
+        f"busy at first order {warm.get('util_at_first_order')}, {ratio_txt} the "
+        f"fixed window (floor {WARMUP_RATIO_FLOOR}), "
+        f"peds {warm.get('peds_at_first_order')}"
+        if ped_rate > 0 else
+        "empirical arms N/A — no background stream (arrival_rate_per_min == 0)"
+    )
+    return CheckResult(B13_NAME, not fails, f"head {head}s, {empirical}", fails)
+
+
+# ------------------------------------------------------------------ B14 / B15
+
+
+def check_ev_car_conservation(inp: dict) -> CheckResult:
+    """B14: per-car passenger conservation, kind completeness, declaration parity.
+
+    The H1 form of H0's A6 + A11, which verify_hr never had: `EV2.n_alights -= 5`
+    and deleting EV4's whole block both passed all ten gates.
+
+    The conservation claim is `boardings - alights == still on board at the end`,
+    NOT `boardings == alights`. Under the `delivery` termination policy the run
+    stops when the last rider leaves, which routinely catches a background
+    pedestrian mid-ride: all four tiers end with 0~2 people still aboard
+    (measured), so the equality form would fail every correct run and an
+    inequality would test nothing. This is the identity A6 already settled on
+    for the same reason — an exact statement about a residual, not a weakening.
+
+    Kind completeness is F2's fix turned into a gate: the per-car by-kind split
+    silently dropped robot boardings (EV3: 221 boardings, 167 in the split), so
+    the sum is compared against the total AND the `robot` key is required to
+    exist — H1 always has a fleet, so a split without it is under-counting again.
+    """
+    res = inp["res"]
+    kpi_ev = res["kpi_summary"]["elevator"]
+    mv = res.get("model_vars") or {}
+    declared = _declared_ev_ids(res)
+    fails: list[str] = []
+
+    missing = [e for e in declared if e not in kpi_ev]
+    extra = [e for e in kpi_ev if e not in declared]
+    if missing:
+        fails.append(f"config declares {declared} but the KPI block omits "
+                     f"{missing} — an unreported car is an unjudged car")
+    if extra:
+        fails.append(f"KPI block reports {extra}, not declared by the config")
+
+    residual = 0
+    for ev_id in declared:
+        blk = kpi_ev.get(ev_id)
+        if blk is None:
+            continue                              # already reported above
+        series = mv.get(f"{ev_id.lower()}_pax")
+        if not series:
+            fails.append(f"{ev_id}: no {ev_id.lower()}_pax series in model_vars — "
+                         f"the on-board residual cannot be judged")
+            continue
+        pax_end = _pax_on_board_at_end(mv, ev_id)
+        residual += pax_end
+        balance = blk["n_boardings"] - blk["n_alights"]
+        if balance != pax_end:
+            fails.append(
+                f"{ev_id}: boardings {blk['n_boardings']} - alights "
+                f"{blk['n_alights']} = {balance} != {pax_end} still on board at "
+                f"the end"
+            )
+        by_kind = blk.get("n_boardings_by_kind") or {}
+        if "robot" not in by_kind:
+            fails.append(f"{ev_id}: n_boardings_by_kind has no 'robot' key "
+                         f"({sorted(by_kind)}) — H1 has a fleet, so its boardings "
+                         f"are being dropped from the split (F2)")
+        if sum(by_kind.values()) != blk["n_boardings"]:
+            fails.append(
+                f"{ev_id}: by-kind boardings sum to {sum(by_kind.values())} but "
+                f"the car recorded {blk['n_boardings']}"
+            )
+
+    return CheckResult(
+        B14_NAME,
+        not fails,
+        f"{len(declared)} declared car(s) {declared} all reported; per-car "
+        f"boardings - alights == still aboard ({residual} at the end); by-kind "
+        f"splits complete (robot included)",
+        fails,
+    )
+
+
+def check_upstream_chain(inp: dict, tick: float) -> CheckResult:
+    """B15: the order's life BEFORE the building — ord -> ready -> ... -> entered.
+
+    B2 starts at the counter, so everything upstream of the front door was
+    unjudged: moving `ready` an hour ahead of the order passed all ten gates.
+    The H0 verifier gates this in A2/A3, but nothing was reading the same fields
+    out of an HR artefact — this is written against the H1 record, not lifted
+    from A2/A3, and it stops at `entered` because B2 owns everything after it.
+
+    The arrival reconstruction is the sharp arm: `arrival == dispatch +
+    horizontal_time_s` is an identity for any σ, so a tampered dispatch or
+    arrival breaks it by exactly the amount it was moved. The entry lag is the
+    tick-grammar consequence — a courier enters on the first tick boundary at or
+    after its planned arrival, so the lag lives in [0, tick] by construction.
+
+    NOT here: the rider-pool replay that would catch a rewritten `rider_type`
+    (B15-3). It is deferred to a purpose-built H1 replay after Phase A's H1 work
+    lands (`etc/scie_phase/plan_b15_3_h1_upstream_replay.md`), and until then
+    that hole is an ACCEPTED, recorded risk rather than a silently covered one.
+    """
+    res = inp["res"]
+    fails: list[str] = []
+    max_lag = 0.0
+    n_judged = 0
+
+    for rec in res["per_order"]:
+        oid = rec["ord_id"]
+        chain = [
+            ("ord", rec.get("ord_time_abs_sec")),
+            ("ready", rec.get("ready_time_sec")),
+            ("dispatch", rec.get("dispatch_time_sec")),
+            ("arrival", rec.get("arrival_time_planned_sec")),
+            ("entered", rec.get("entered_at_sec")),
+        ]
+        if any(v is None for _, v in chain):
+            absent = [n for n, v in chain if v is None]
+            fails.append(f"ord {oid}: upstream stamp(s) missing {absent}")
+            continue
+        n_judged += 1
+        for (n_a, v_a), (n_b, v_b) in zip(chain, chain[1:], strict=False):
+            if v_a > v_b + FLOAT_TOL:
+                fails.append(f"ord {oid}: {n_a} {v_a} after {n_b} {v_b}")
+        horiz = rec.get("horizontal_time_s")
+        if horiz is None:
+            fails.append(f"ord {oid}: no horizontal_time_s — the arrival cannot "
+                         f"be reconstructed")
+        else:
+            recon = rec["dispatch_time_sec"] + horiz
+            if abs(rec["arrival_time_planned_sec"] - recon) > FLOAT_TOL:
+                fails.append(
+                    f"ord {oid}: arrival {rec['arrival_time_planned_sec']:.4f} != "
+                    f"dispatch + horizontal {recon:.4f}"
+                )
+        lag = rec["entered_at_sec"] - rec["arrival_time_planned_sec"]
+        max_lag = max(max_lag, lag)
+        if not (-FLOAT_TOL <= lag <= tick + FLOAT_TOL):
+            fails.append(f"ord {oid}: entry lag {lag:+.4f}s outside [0, {tick}]")
+
+    return CheckResult(
+        B15_NAME,
+        not fails,
+        f"{n_judged} orders: ord<=ready<=dispatch<=arrival<=entered, arrival "
+        f"reconstructed from dispatch+horizontal; max entry lag {max_lag:.3f}s "
+        f"(tolerance {tick}s). rider_type replay is B15-3, deferred",
+        fails,
+    )
+
+
+# ------------------------------------------------------------------ B16 / B17
+
+
+def check_leg_floor_range(inp: dict) -> CheckResult:
+    """B16: every robot leg delivers to a floor that HAS offices — [2, n_floors].
+
+    The production-side rule (F1: `assign()` rejects `floor < 2`, because a
+    same-floor delivery walks the FSM into an unreachable state) enforced again
+    on the ARTEFACT, from the other side. The same rule in two places, checked
+    independently, is what makes it a rule rather than an implementation detail.
+
+    It also owns a failure mode that used to be reported as a gate crash: floor
+    1 and floor n+1 have no office node, so B4's `_leg_bounds` raised
+    `NodeNotFound` and lost its verdict on every OTHER leg. B4 now skips such
+    legs and this gate names them, so the report says "floor 1 is out of range"
+    instead of "B4 crashed".
+    """
+    res = inp["res"]
+    n_floors = int(res["config"]["building"]["n_floors"])
+    fails: list[str] = []
+    seen: set[int] = set()
+
+    for oid, lg in sorted(_legs(res).items()):
+        floor = lg.get("floor")
+        if floor is None:
+            fails.append(f"ord {oid}: leg has no delivery floor")
+            continue
+        seen.add(floor)
+        if not (2 <= floor <= n_floors):
+            fails.append(
+                f"ord {oid}: delivery floor {floor} outside [2, {n_floors}] — "
+                f"floor 1 is the lobby (no offices, and `assign()` rejects it) "
+                f"and {n_floors} is the top declared floor"
+            )
+    return CheckResult(
+        B16_NAME,
+        not fails,
+        f"{len(_legs(res))} legs on floors {sorted(seen) or 'none'} "
+        f"(admissible [2, {n_floors}])",
+        fails,
+    )
+
+
+def check_terminal_accounting(inp: dict) -> CheckResult:
+    """B17: the end-state counters decompose the way F3 defined them.
+
+    F3 split "not served" into its two disjoint halves — riders still queued for
+    a robot, and orders a robot was carrying when the clock stopped — and added
+    `n_trips_inflight_at_end` as the cap detector. This gate holds that
+    decomposition to its own definition:
+
+        unserved >= queued                       (queued riders ARE unserved)
+        unserved - queued <= trips in flight     (the rest are being carried)
+        unserved <= orders - delivered           (an unserved order is undelivered)
+
+    and, for a run that ended because the work ended, requires the strong form:
+    nothing in flight and nothing queued. That is the arm a censored run fails
+    before anyone quotes its utilisation.
+
+    B17-2 in the design (`design_a7a_gates.md`) asked whether a separate gate was
+    needed to make a cap-terminated run non-quotable. Measured on a real cap
+    termination (K50_1 with `max_overrun_sec_robot` = 600 s): B11 already fails
+    it on four counts, so the honesty requirement is met by naming the
+    consequence in B11's message rather than by adding a second gate that fires
+    on the same runs — see `check_end_state`.
+    """
+    res = inp["res"]
+    kpi = res["kpi_summary"]
+    rb = kpi.get("robot") or {}
+    sim = kpi["simulation"]
+    fails: list[str] = []
+
+    fields = {k: rb.get(k) for k in ("n_trips_inflight_at_end",
+                                     "n_requests_queued_at_end",
+                                     "n_requests_unserved_at_end")}
+    absent = [k for k, v in fields.items() if v is None]
+    if absent:
+        return CheckResult(
+            B17_NAME, False,
+            f"robot block is missing {absent}",
+            [f"kpi_summary.robot has no {k} — the run predates F3, or the field "
+             f"was removed; the censoring state of this run is unknowable"
+             for k in absent],
+        )
+    inflight = fields["n_trips_inflight_at_end"]
+    queued = fields["n_requests_queued_at_end"]
+    unserved = fields["n_requests_unserved_at_end"]
+    undelivered = kpi["customer"]["n_orders"] - kpi["customer"]["n_delivered"]
+
+    if unserved < queued:
+        fails.append(f"{unserved} unserved < {queued} queued — a rider waiting "
+                     f"in the FCFS queue is by definition unserved (F3)")
+    if unserved - queued > inflight:
+        fails.append(
+            f"{unserved - queued} unserved order(s) beyond the queue, but only "
+            f"{inflight} trip(s) in flight — an unserved order is either queued "
+            f"or being carried"
+        )
+    if unserved > undelivered:
+        fails.append(f"{unserved} unserved > {undelivered} undelivered — an "
+                     f"unserved order cannot have been delivered")
+    if not sim.get("terminated_by_cap"):
+        if inflight:
+            fails.append(f"{inflight} trip(s) still in flight although the run "
+                         f"was not stopped by the cap — the run only ends when "
+                         f"every carrier has settled (§3.2)")
+        if queued:
+            fails.append(f"{queued} request(s) still queued although the run was "
+                         f"not stopped by the cap")
+
+    return CheckResult(
+        B17_NAME,
+        not fails,
+        f"inflight={inflight}, queued={queued}, unserved={unserved} of "
+        f"{undelivered} undelivered (cap={bool(sim.get('terminated_by_cap'))})",
+        fails,
+    )
+
+
+# ------------------------------------------------------------------------ B18
+
+# B18 ceiling. `n_board_denied` counts the times a robot asked to board a car
+# that had no room for it, so a dispatch or EV-protocol regression shows up
+# here first — and nothing was watching it (A5-⑤-2, A6 이월 3).
+#
+# Frozen 2026-08-11 from the A6 corpus (`experiments/vv_monotonicity_hr.py`
+# direction 2, seeds 1..10, the `gate=True` rows of
+# `results/vv/monotonicity_hr.csv`; the means below reproduce that file exactly):
+#
+#   tier   n_board_denied over 10 seeds                     mean     σ     +4σ
+#   K50    16 6 13 18 17 14 13 15 12 15                     13.9   3.35   27.29
+#   K100   45 36 38 54 31 41 35 41 41 44                    40.6   6.35   65.98
+#   K200   100 82 90 89 67 96 87 95 87 77                   87.0   9.73  125.92
+#   K300   118 104 125 99 121 100 108 97 101 118           109.1  10.42  150.77
+#
+# mean + 4σ (the A13 precedent) rather than a percentile: with 10 seeds a max is
+# not a bound, and a tighter multiple would turn an unlucky seed into a false
+# FAIL. The bound is rounded UP to the next integer — the quantity is a count.
+BOARD_DENIED_MAX = {50: 28, 100: 66, 200: 126, 300: 151}
+
+# The configuration the ceiling was measured under. Outside it the number means
+# something else entirely: the pedestrian-rush extreme case scores 737 on the
+# same K50 scenario, which is a RESULT (tests/test_vv_extreme_hr.py owns it),
+# not a regression.
+BOARD_DENIED_ENVELOPE = {"n_robots": 5, "ped_rate": 7.5, "n_shared_ev": 2}
+
+
+def check_board_denied(inp: dict) -> CheckResult:
+    """B18: robot boarding denials stay inside the calibrated per-tier ceiling."""
+    res = inp["res"]
+    kpi = res["kpi_summary"]
+    denied = kpi.get("robot", {}).get("n_board_denied")
+    k = kpi["customer"]["n_orders"]
+    n_robots = kpi.get("robot", {}).get("n_robots")
+    ped_rate = float(res["config"]["pedestrian"].get("arrival_rate_per_min", 0.0))
+    n_shared = len(_shared_ids(res))
+
+    if denied is None:
+        return CheckResult(
+            B18_NAME, False, "no robot.n_board_denied in the artefact",
+            ["the run reported no boarding-denial count — the deny channel is "
+             "unmeasured, so the bound cannot be applied"],
+        )
+
+    off = []
+    if n_robots != BOARD_DENIED_ENVELOPE["n_robots"]:
+        off.append(f"fleet {n_robots} != {BOARD_DENIED_ENVELOPE['n_robots']}")
+    if abs(ped_rate - BOARD_DENIED_ENVELOPE["ped_rate"]) > FLOAT_TOL:
+        off.append(f"pedestrians {ped_rate}/min != "
+                   f"{BOARD_DENIED_ENVELOPE['ped_rate']}/min")
+    if n_shared != BOARD_DENIED_ENVELOPE["n_shared_ev"]:
+        off.append(f"{n_shared} shared cars != "
+                   f"{BOARD_DENIED_ENVELOPE['n_shared_ev']}")
+    if k not in BOARD_DENIED_MAX:
+        off.append(f"K={k} is not a calibrated tier {sorted(BOARD_DENIED_MAX)}")
+    if off:
+        return CheckResult(
+            B18_NAME, True,
+            f"SKIP: n_board_denied={denied}, but this run is outside the "
+            f"calibrated envelope ({'; '.join(off)}) — judging it against the "
+            f"production ceiling would compare a number to an envelope that "
+            f"never contained it",
+            skipped=True,
+        )
+
+    bound = BOARD_DENIED_MAX[k]
+    fails = []
+    if denied > bound:
+        fails.append(
+            f"n_board_denied={denied} > {bound} for the K{k} tier (10-seed "
+            f"mean + 4σ, frozen 2026-08-11) — the shared cars are refusing the "
+            f"fleet far more often than the calibrated corpus does"
+        )
+    return CheckResult(
+        B18_NAME, not fails,
+        f"{denied} denials vs the K{k} ceiling {bound} (10-seed mean + 4σ)",
         fails,
     )
 
@@ -905,7 +1553,7 @@ def _guard_pair(name: str, fn, fallback):  # noqa: ANN001, ANN202
 
 
 def run_checks(result: dict) -> dict:
-    """Run B1..B11 on an H1 results dict; return a report (importable API)."""
+    """Run B1..B18 on an H1 results dict; return a report (importable API)."""
     # Keyed on the KEY's presence, not its truthiness: `run.py` emits
     # `robot_legs: []` for a robot run in which no trip finished, which is
     # exactly what a cap-truncated or badly undersized fleet produces — the run
@@ -925,6 +1573,12 @@ def run_checks(result: dict) -> dict:
     except Exception:  # noqa: BLE001 — see above; B1 reports the consequence
         inp = {"res": result, "scenario": None, "riders": None}
     tick = _tick(result)
+    # B16 runs BEFORE B4 (design_a7a_gates.md): a leg on floor 1 has no office
+    # node, so B4 used to die on it with `NodeNotFound` and report "gate crashed"
+    # — a diagnosis of the verifier, not of the run. Judging the range first
+    # means the report leads with the actual defect. B4 skips those legs now, so
+    # the ordering is belt and braces rather than the sole defence.
+    b16_result = _guard(B16_NAME, lambda: check_leg_floor_range(inp))
     b4_result, b4_report = _guard_pair(
         "B4 robot kinematics (lower bound)",
         lambda: check_robot_kinematics(inp, tick), {},
@@ -946,6 +1600,13 @@ def run_checks(result: dict) -> dict:
         b9_result,
         _guard("B10 battery conservation", lambda: check_battery(inp)),
         _guard("B11 end state", lambda: check_end_state(inp)),
+        _guard(B12_NAME, lambda: check_order_outcomes(inp)),
+        _guard(B13_NAME, lambda: check_warmup_hr(inp)),
+        _guard(B14_NAME, lambda: check_ev_car_conservation(inp)),
+        _guard(B15_NAME, lambda: check_upstream_chain(inp, tick)),
+        b16_result,
+        _guard(B17_NAME, lambda: check_terminal_accounting(inp)),
+        _guard(B18_NAME, lambda: check_board_denied(inp)),
     ]
     return {
         "checks": checks,
