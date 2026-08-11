@@ -1,67 +1,57 @@
-# 다음 세션 시작점 — Phase A (2026-08-11 기준)
+# 다음 세션 시작점 — Phase A (2026-08-11 저녁 기준)
 
 > **이 문서의 지위: 정본이 아니다.** 세션을 다시 열었을 때 **첫 5분에 읽을 것**만 담은
-> 포인터 문서다. 모든 상세의 정본은 아래 §5의 지도가 가리키는 곳에 있고, 충돌하면
+> 포인터 문서다. 모든 상세의 정본은 §5의 지도가 가리키는 곳에 있고, 충돌하면
 > **정본이 이긴다.** 작업이 진행되면 이 문서는 갱신하거나 지운다.
 
 ---
 
 ## §1. 지금 상태 (30초)
 
-- **Phase A: A0~A5 완료**(+A5-b 가동률 분모 정정, +A5-c 게이트 리뷰 반영). **A6·A7 남음.**
-- 스위트 **634 passed / 3 skipped**. B-게이트 4개 수요 티어 **전건 10/10**.
-- 오늘 있었던 큰 일 3가지:
-  1. **A5-c 게이트 독립 리뷰**(오퍼스 `max`, 5/7 앵글) — 게이트 결함 **9건** + 테스트
-     취약점 **2건** 적발·수정, 회귀 15건 추가. 계획서가 요구한 리뷰는 이것으로 **충족**.
-  2. **결정 #31 확정** — 보행자 EV 대기를 **타당성 가드로 격하**, 외부성 자리에
-     **로봇 EV 대기·`board_denied`**. 문서 7종 정합 완료. **코드 변경 없음.**
-  3. **결정 #22 전제 해소** — Fable 재사용 가능. **전면 복귀가 아니라 선별 투입**(§4).
+- **Phase A: A0~A6 완료.** 스위트 **646 passed / 3 skipped**. **A7-a 설계 완료(승인 대기)·A7-b 남음.**
+- 오늘(2026-08-11) 있었던 큰 일 4가지:
+  1. **git 이력 초기화** — STAGE 시절 22커밋을 `legacy/stage-era`(로컬·원격·번들 3중 보존)로
+     격리하고, 새 루트 커밋 `56ce0b8`(H0 v2.1 + H1 A0~A5 통합 스냅샷)로 재출발.
+     정본 문서(etc/)가 **처음으로 이력에 들어갔다**. 도중 무수정 추적 파일 40개 소실
+     사고가 있었고 전량 복구·검증됨(계획서 §9 정오 참조).
+  2. **Fable 1순위 리뷰 + 수정 완결** — `kpi.py`+`robot.py` 독립 리뷰(Fable/max)가
+     발견 9건(F1~F9)을 냈고, 전건 수정 + 회귀 10건 추가. **F2로 카별 EV 대기 수치가
+     바뀌었다**(EV3 29.46→25.37 s — 로봇 혼입 제거, 커밋 메시지에 명세).
+  3. **A6 단조성 완료** — ①⑤ PASS, ② 1지표 1구간 반전(ped_decay 침투 차이로 규명,
+     게이트 정의 유지), ③ 계획서 경고대로 FAIL(버그 아님 — Phase D 이월), ④ TIE.
+     극한 2케이스 모두 verify_hr 10/10.
+  4. **A7-a 게이트 보강 설계 완료(Fable)** — 신설 게이트 **B12~B18** 명세.
+     `etc/scie_phase/design_a7a_gates.md`가 정본. **사용자 결정 4건 대기**(§3).
 
 ### 재개 직후 확인 명령
 
 ```bash
 cd /home/sw/Research/abm_new
-.venv/bin/python -m pytest -q                       # 634 passed / 3 skipped 이어야 함
+git log --oneline | head -3          # c56ac1a(A6) 이후여야 함, working tree clean
+.venv/bin/python -m pytest -q        # 646 passed / 3 skipped 이어야 함
 .venv/bin/python -m simulation.run --scenario data/data1/K50_1.json \
-    --floor-profile uniform --mode hr --out results/baseline_hr_K50_1_uniform_s42.json
-.venv/bin/python -m analysis.verify_hr results/baseline_hr_K50_1_uniform_s42.json
-                                                     # 10 passed, 0 skipped, 0 failed
+    --floor-profile uniform --mode hr --out results/check_hr_K50_1_s42.json
+.venv/bin/python -m analysis.verify_hr results/check_hr_K50_1_s42.json
+                                     # 10 passed, 0 skipped, 0 failed
 ```
-
-⚠️ **A0~A5 전체가 아직 미커밋이다**(마지막 커밋은 STAGE 2 시절, 미추적 파일 81개).
-리뷰·이력 관리가 필요하면 재개 시 가장 먼저 커밋할 것.
 
 ---
 
 ## §2. 남은 작업 — 실행 순서
 
-### ▶ Step A6 — 단조성 5방향 + 극한 2케이스 (소넷 / medium, ~0.75일)
+### ▶ A7-a 게이트 보강 **구현** (오퍼스 / high, 설계 승인 후)
 
-①로봇 **1→3→5** ⇒ 로봇 대기↓ ②**K↑ ⇒ `utilization_ops`↑ · 로봇 EV 대기·`board_denied`↑**
-③저부하 HR < H0 ④K↑ ⇒ 충전 이벤트↓·종료 SOC↓ ⑤공용 EV 2→3→4 ⇒ 로봇 대기↓
+정본 = `etc/scie_phase/design_a7a_gates.md`. 신설 B12~B18:
+B12 주문 결과 정합·하한 🔴 · B13 워밍업 적정성(H1판 A13) 🔴 · B14 카별 보존+선언 정합 ·
+B15 상류 체인 · B16 floor 범위 · B17 캡 종료 검열 정직성(kpi 정의 변경 동반) ·
+B18 deny 상한(A6 10-seed 참조점). 각 게이트는 조작-음성 회귀 테스트 필수(~14건).
 
-🔴 **착수 전 반드시 알 것 2가지** — 구판 문구대로 짜면 **정상 모델이 FAIL한다**:
-- **②의 가동률은 `utilization_ops`로 잰다.** 고정창은 K200 0.735 / K300 0.738로
-  판별력이 없다(창 길이가 K와 무관해 포화 후 천장에 붙는다).
-- **②의 "공용 EV 보행자 대기↑"는 폐기됐다**(결정 #31). 실측은 K↑에서 오히려 **감소**
-  한다(H1 30.08 → 29.73). 로봇 측 경합 지표로 교체됐다.
-- ③은 FAIL이어도 곧바로 버그로 단정하지 말 것 — 계획서 §2 A6의 사전 경고 참조.
+### ▶ A7-b 전수 실행 (소넷 / medium) — **B17-2 확정·구현 후에만**
 
-### ▶ Step A7 — **두 조각으로 분리 권고** (원안은 소넷/medium 1일)
-
-**A7-a 게이트 보강 (오퍼스 또는 Fable / medium)** ← A5-c가 만든 신규 항목
-A5-c 리뷰가 **H0 A-게이트 대비 누락 8건**을 실측으로 보고했다. 특히 둘이 급하다:
-- **주문 결과가 무게이트**: `t_e2e = 1.0초`로 바꿔도, SLA를 전건 반전해도 **10/10 PASS**.
-  논문의 주 지표다.
-- **워밍업 적정성이 무게이트**: `warmup` 블록을 삭제해도 PASS. H1이 차갑게 돌면 EV
-  대기가 낮게 나와 **H0 대비 우위가 워밍업 인공물**이 된다.
-- 나머지 6건(A6 카별 보존·A11 선언 정합·상류 체인 A2/A3/A7·floor 범위·`_guard` 공용화·
-  게이트 이름 이중화)은 구현 로그 **§A5-c-④** 표가 정본.
-
-**A7-b 전수 실행 (소넷 / medium)** ← 원 계획 그대로
 K300_4를 43,200 s cap으로 1 run → 드레인 실측 → ×1.3으로 `max_overrun_sec_robot` 확정
-(현 32,400은 추정치. 참고: uniform·seed 42의 K300_4는 **16,338틱**에 cap 없이 완주).
-그 뒤 28×3 = **84 run** 전수 B1~B11 PASS.
+(현 32,400은 추정치; A6 극한 2케이스는 기본 cap으로 완주했다). 그 뒤 28×3 = **84 run**
+전수 B1~B18 PASS. ⚠️ B17-2(ops 창 경계)가 나중에 바뀌면 84 run을 재실행하게 된다 —
+순서를 지킬 것.
 
 ### 이후
 
@@ -70,33 +60,19 @@ K300_4를 43,200 s cap으로 1 run → 드레인 실측 → ×1.3으로 `max_ove
 
 ---
 
-## §3. 사용자 액션 대기 — 1건
+## §3. 사용자 액션 대기 — 2건
 
 | # | 항목 | 시한 |
 |---|---|---|
-| 1 | **`T_building_order` 논문 인용본 선택** — ⓐ`t_building_order_sec`(라이더 입장 → 인도, 로봇 대기 **포함**, H0 `T_lobby`와 같은 구간) vs ⓑ`t_order_post_handoff_sec`(인계 시작 → 인도). **코드는 이미 둘 다 산출한다** | Phase F 집필 전까지 |
-
-(해소됨: H0 육안 재서명 ✅ 2026-08-07 · A5 게이트 리뷰 ✅ 2026-08-11 ·
-보행자 EV 대기 격하 ✅ 2026-08-11 = 결정 #31)
+| 1 | **A7-a 설계 결정 4건** — ①B17-2 ops 창 우측 경계(권고 ⓐ min(정착, 종료)) ②B13-2 임계(권고 H0 0.35 재사용) ③B18 임계 공식(권고 mean+4σ) ④B15-3 복제-이식(권고 채택). 상세 = `design_a7a_gates.md` §사용자 결정 | **A7-a 구현 착수 전** |
+| 2 | **`T_building_order` 논문 인용본 선택** — ⓐ`t_building_order_sec`(입장→인도) vs ⓑ`t_order_post_handoff_sec`(인계→인도). 코드는 둘 다 산출. ⚠️ F6 수정으로 "H0 t_lobby와 동일 구간" 주석이 **오류였음이 확정**됐다(55~91 s 차이) — 선택 시 참고 | Phase F 집필 전 |
 
 ---
 
-## §4. Fable 투입 계획 (결정 #22 개정, 상세 = 구현 로그 §A5-d)
+## §4. Fable 투입 잔여 (결정 #22 개정)
 
-**전면 복귀가 아니라 선별 투입.** 근거: A5 리뷰가 835줄에서 결함 9건을 냈는데,
-**독립 리뷰를 한 번도 받지 않은 Phase A 산출물이 1,732줄** 남아 있다.
-
-| 순위 | 대상 | 규모 | 왜 |
-|---|---|---|---|
-| **1** | **`kpi.py`(790) + `robot.py`(440) 독립 리뷰** | 1,230줄 | 지금까지 작업분 중 최대 위험. **kpi.py는 논문의 모든 수치가 나오는 곳** — 게이트가 틀리면 판정을 못 할 뿐이지만 여기가 틀리면 **틀린 수치가 논문에 실린다** |
-| **2** | **A7-a 게이트 설계** | 신규 | 앞으로 할 것 중 최대 위험(§2 참조) |
-| **3** | A5-c 중단 앵글 2건(Efficiency·Conventions) | — | 이미 시작한 리뷰의 저렴한 완결 |
-| — | **투입 안 함**: A6 실행 · A7-b 84 run · 문서 갱신 | — | 실행·집계는 모델 등급을 올려도 얻을 것이 없다 |
-
-⚠️ **한계 고지**: 이 순위는 Fable의 스펙이 아니라 **잔여 위험의 크기**로 매겼다
-(Fable 5의 능력·비용 프로파일 문서가 세션에 없었다). 실제 강점이 다르면 위험 순서를 따른다.
-
-**재개 시 첫 질문**: 1순위(`kpi.py` + `robot.py` 리뷰)를 Fable로 띄울지.
+1·2순위 완료(kpi/robot 리뷰 ✅ · A7-a 설계 ✅). **잔여 = 3순위**: A5-c에서 중단된
+앵글 2건(Efficiency·Conventions) — 이미 시작한 리뷰의 저렴한 완결. 급하지 않음.
 
 ---
 
@@ -105,13 +81,16 @@ K300_4를 43,200 s cap으로 1 run → 드레인 실측 → ×1.3으로 `max_ove
 | 무엇을 알고 싶은가 | 정본 |
 |---|---|
 | Phase A 전체 상태·규약 8가지·남은 작업 | `etc/HANDOFF_phase_a.md` |
-| **각 Step에서 계획이 왜 틀렸나·무엇을 발견했나** | `etc/scie_phase/phase_A_implementation_log.md` (§A0~§A5-d) |
-| 사용자 확정 결정 #1~**#31** | `etc/research_plan_scie.md` §1 |
-| A5-c 리뷰 결함 9건의 상세·이월 8건 | 구현 로그 **§A5-c** |
-| Fable 투입 근거 | 구현 로그 **§A5-d** |
-| 측정 창 4개·외부성 지표 교체 | `HANDOFF_phase_a.md` **§3.7·§3.8** |
+| 각 Step에서 계획이 왜 틀렸나·무엇을 발견했나 | `etc/scie_phase/phase_A_implementation_log.md` (§A0~§A6) |
+| 사용자 확정 결정 #1~#31 | `etc/research_plan_scie.md` §1 |
+| **A7-a 신설 게이트 B12~B18 명세** | `etc/scie_phase/design_a7a_gates.md` |
+| **F1~F9 리뷰 발견·수정 내역** | `etc/scie_phase/review_fable5_kpi_robot.md` |
+| **git 이력 리셋 계획·실행 로그·정오** | `etc/plan_git_history_reset.md` (§8·§9) |
+| A6 단조성 실측·원인 분석 | 구현 로그 §A6 + `experiments/vv_monotonicity_hr.py` |
+| 측정 창 4개·외부성 지표 | `HANDOFF_phase_a.md` §3.7·§3.8 |
 | H0 전체(건물·창·종료 규약) | `etc/HANDOFF_v2.md` |
 | H1 육안 체크리스트(A7 후 서명) | `etc/checklist_visual_h1.md` |
+| 옛 STAGE 이력 | `legacy/stage-era` 브랜치 · `~/Research/backups/abm_new_stage_era_20260811.bundle` |
 
 **Solara 앱 기동** (반드시 `SOLARA_KERNEL_CULL_TIMEOUT` 포함 — 빼면 고아 커널이 24h 생존):
 
