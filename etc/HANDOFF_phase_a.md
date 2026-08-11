@@ -102,6 +102,12 @@
 - EV별 `*_by_kind_fixed`(rider/pedestrian/**robot**)가 **정본**, 전용/공용 그룹은
   **파생**(전용 공집합이면 `None`). ⚠️ 함대 가동률은 **A5-b에서 `utilization_ops`로
   정정**됐다(결정 #31 · §3.7) — `utilization_fixed`는 존치하되 인용본이 아니다.
+- 🔴 **2026-08-11 F2 교정(인적 규칙)** — EV별 **전창** 필드도 같은 규약으로 통일했다:
+  ① `w_ev_mean_sec`·`w_ev_p95_sec`는 **사람만**(로봇 탑승 제외, `building.w_ev_mean_all_sec`
+  와 동일 규칙). ② 전창 `n_boardings_by_kind`·`w_ev_*_by_kind_sec`에 **로봇 모드에서만**
+  `robot` 키를 추가(H0 스키마 불변). `n_boardings`는 카 부하 계수라 종전대로 전 탑승이며,
+  이제 by_kind 합과 정확히 일치한다. 수치 영향: H1 K50_1 s42에서 EV3
+  `w_ev_mean_sec` 29.46→**25.37 s**, EV4 24.35→**23.36 s**(H0 산출물은 비트 동일).
 - **`robot` KPI 섹션**(로봇 모드에서만 방출): 가동률(고정창)·7버킷 점유·배터리·
   `robot_board_denied`·`evsel_stale_ratio`·`n_requests_unserved_at_end`.
 - `drain_span_sec`·`drain_deliveries`·`drain_ev_boardings`·`drain_robot_trips`.

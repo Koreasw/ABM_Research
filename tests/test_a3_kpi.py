@@ -317,6 +317,56 @@ def test_robot_ev_contention_is_recorded(hr_model) -> None:
     )
 
 
+def test_per_car_by_kind_split_accounts_for_every_boarding(hr_model) -> None:
+    """F2 — a car's by-kind counts must add up to its boardings, robots included.
+
+    Before the fix `n_boardings_by_kind` silently dropped robot boardings (EV3:
+    221 boardings, by-kind sum 167), so the shared cars' extra load — the very
+    mechanism the paper studies — was invisible in the per-car record.
+    """
+    s = summarize(hr_model)
+    total_robot = 0
+    for ev in hr_model.elevators:
+        blk = s["elevator"][ev.ev_id]
+        assert set(blk["n_boardings_by_kind"]) == {"rider", "pedestrian", "robot"}
+        assert sum(blk["n_boardings_by_kind"].values()) == blk["n_boardings"]
+        n_robot = sum(1 for b in ev.boarding_log if b["kind"] == "robot")
+        assert blk["n_boardings_by_kind"]["robot"] == n_robot
+        if n_robot:
+            assert blk["w_ev_mean_by_kind_sec"]["robot"] == pytest.approx(
+                sum(b["wait_sec"] for b in ev.boarding_log if b["kind"] == "robot")
+                / n_robot
+            )
+        total_robot += n_robot
+    assert total_robot > 0, "no robot boardings — the regression would be vacuous"
+
+
+def test_per_car_pooled_wait_is_a_person_quantity(hr_model) -> None:
+    """F2 — `w_ev_mean_sec`/`w_ev_p95_sec` follow the same personhood rule as
+    `building.w_ev_mean_all_sec` (A3 item 5). Averaging robot boardings into a
+    car's mean moved EV3 from 25.37 s (people) to 29.46 s (pooled), a 16 %
+    contamination of a field the H0→H1 comparison reads as a people KPI.
+    """
+    s = summarize(hr_model)
+    for ev in hr_model.elevators:
+        blk = s["elevator"][ev.ev_id]
+        people = [b["wait_sec"] for b in ev.boarding_log if b["kind"] != "robot"]
+        assert blk["w_ev_mean_sec"] == pytest.approx(sum(people) / len(people))
+        # and it must differ from the robot-polluted pooled figure on the cars
+        # robots actually use, or the fix is untested
+        if ev.shared_with_robot:
+            pooled = [b["wait_sec"] for b in ev.boarding_log]
+            assert blk["w_ev_mean_sec"] != pytest.approx(sum(pooled) / len(pooled))
+
+
+def test_h0_per_car_split_has_no_robot_key(h0_model) -> None:
+    """F2 must not fabricate an always-zero robot key in the frozen H0 schema."""
+    s = summarize(h0_model)
+    for blk in s["elevator"].values():
+        assert set(blk["n_boardings_by_kind"]) == {"rider", "pedestrian"}
+        assert sum(blk["n_boardings_by_kind"].values()) == blk["n_boardings"]
+
+
 def test_people_ev_wait_excludes_robot_boardings(hr_model) -> None:
     """`w_ev_mean_all_sec` is a per-PERSON quantity in every mode (A3 item 5)."""
     s = summarize(hr_model)

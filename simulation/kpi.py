@@ -428,8 +428,23 @@ def summarize(model) -> dict:  # noqa: ANN001
     # can be aggregated from observations rather than from per-car means (a mean
     # of means would silently weight a car with 3 boardings like one with 300)
     fixed_waits_by_ev: dict[str, dict[str, list[float]]] = {}
+    # F2 (Fable 5 리뷰 2026-08-11): the per-car split carries a `robot` key iff
+    # a fleet exists, which is what the T0a comment below always promised ("H1
+    # adds it when robots exist") and what `analysis/vv_balance.py` already
+    # filters on. In H0 the key set is unchanged, so the frozen schema is intact.
+    person_kinds = ("rider", "pedestrian")
+    full_kinds = (*person_kinds, "robot") if model.robots else person_kinds
     for ev_idx, ev in enumerate(model.elevators):
-        waits = [b["wait_sec"] for b in ev.boarding_log]
+        # F2: personhood rule (A3 item 5) — `w_ev_mean_sec`/`w_ev_p95_sec` are
+        # "the wait a PERSON experienced at this car", so a robot boarding is
+        # excluded exactly as it is from `building.w_ev_mean_all_sec`. Before the
+        # fix these two fields averaged robots into the people's wait while the
+        # by-kind split next to them dropped robots entirely — the same car
+        # reported 221 boardings, a by-kind sum of 167 and a 16 %-contaminated
+        # mean (H1 K50_1 seed 42, EV3: 29.46 s pooled vs 25.37 s for people).
+        # Filtered in boarding order so H0, where the filter is a no-op, stays
+        # bit-identical.
+        waits = [b["wait_sec"] for b in ev.boarding_log if b["kind"] != "robot"]
         # V-KPIWIN: busy fraction over the order span only (numerator = busy
         # ticks landing in the span, denominator = span ticks). None when the
         # span is empty or the cumulative history is unavailable (older models).
@@ -456,22 +471,26 @@ def summarize(model) -> dict:  # noqa: ANN001
         # claim is a two-sided externality (shared cars degrade, dedicated cars
         # may improve). Recorded here for H0 so the H1 comparison has a
         # pre-robot baseline; Phase A Step A3 would otherwise have to
-        # reconstruct it after the fact. `robot` is *not* a key here — H0 has no
+        # reconstruct it after the fact. `robot` is *not* a key in H0 — H0 has no
         # robot boardings and inventing an always-zero key would make the H0
-        # schema lie about what it measured; H1 adds it when robots exist.
+        # schema lie about what it measured; H1 adds it when robots exist
+        # (F2 — before the fix it never did, so 54 of EV3's 221 boardings were
+        # invisible in every H1 summary).
         # Strictly additive: every pre-existing field above is untouched, which
         # is what tests/test_h0_frozen_snapshot.py's superset invariant checks.
-        waits_by_kind = {"rider": [], "pedestrian": []}
+        waits_by_kind: dict[str, list[float]] = {k: [] for k in full_kinds}
         for b in ev.boarding_log:
             if b["kind"] in waits_by_kind:
                 waits_by_kind[b["kind"]].append(b["wait_sec"])
         # A3 layer ①: the same split restricted to the fixed window, and this
         # is the PRIMARY record for the externality claim — `ev_id` is the unit
         # of truth, the dedicated/shared groups below are derived from it.
-        # `robot` joins the keys here (unlike the frozen full-window split
-        # above) because in H1 the robot boardings ARE the mechanism under
-        # study; the dict is fixed-key so H0 reports an honest empty `robot`
-        # entry (n=0, wait None) inside a field that did not exist before A3.
+        # `robot` is an unconditional key here (unlike the full-window split
+        # above, which adds it only when a fleet exists so the frozen H0 schema
+        # is preserved) because in H1 the robot boardings ARE the mechanism
+        # under study; this dict is fixed-key so H0 reports an honest empty
+        # `robot` entry (n=0, wait None) inside a field that did not exist
+        # before A3 and therefore has no frozen H0 form to protect.
         # A boarding is placed in the window by `t_board_sec`, the moment the
         # car actually took the passenger: the alternative (wait start) would
         # let a queue that formed inside the window but boarded after it count
