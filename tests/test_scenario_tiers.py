@@ -57,6 +57,10 @@ CORPUS_SCRIPTS = [
 # whole corpus. They must not name an excluded scenario as a representative.
 SUBSET_SCRIPTS = [
     ROOT / "experiments" / "vv_monotonicity.py",
+    # Phase A Step A6 (HR-mode monotonicity, 2026-08-11): same representative-
+    # subset shape as its H0 sibling above (K50_1/K100_1/K200_1/K300_4 by name,
+    # not a corpus sweep).
+    ROOT / "experiments" / "vv_monotonicity_hr.py",
     ROOT / "experiments" / "vv_variance.py",
     ROOT / "experiments" / "vv_window_bias.py",
     ROOT / "analysis" / "vv_evsel.py",
